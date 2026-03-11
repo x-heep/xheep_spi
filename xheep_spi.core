@@ -10,20 +10,16 @@ description: "core-v-mini-mcu spi peripheral"
 filesets:
   files_rtl:
     depend:
-      - pulp-platform.org::common_cells
+      - pulp-platform.org::register_interface
+      - yosyshq:picorv32_spimemio:0-r1
+      - lowrisc:ip:spi_host:1.0
     files:
-    - rtl/i2s_reg_pkg.sv
-    - rtl/i2s_reg_top.sv
-    - rtl/i2s.sv
-    - rtl/i2s_core.sv
-    - rtl/i2s_rx_channel.sv
-    - rtl/i2s_ws_gen.sv
-    - rtl/event_counter.sv
+    - rtl/spi_subsystem.sv
     file_type: systemVerilogSource
 
   files_verilator_waiver:
     files:
-      - i2s.vlt
+      - lint/w25q128jw_controller.vlt
     file_type: vlt
 
 targets:
