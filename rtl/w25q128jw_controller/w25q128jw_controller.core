@@ -20,13 +20,7 @@ filesets:
     - rtl/w25q128jw_controller.sv
     file_type: systemVerilogSource
 
-  verilator_waivers:
-    files:
-    - w25q128jw_controller.vlt
-    file_type: vlt
-
 targets:
   default:
     filesets:
     - files_rtl
-    - tool_verilator? (verilator_waivers)
