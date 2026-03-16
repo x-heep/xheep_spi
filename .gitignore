@@ -1,3 +1,2 @@
-rtl/spi_subsystem.sv
-
+# Ignore Mac system files
 .DS_Store
