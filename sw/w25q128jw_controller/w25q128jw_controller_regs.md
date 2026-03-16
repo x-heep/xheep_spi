@@ -16,17 +16,18 @@
 Control register for flash controller
 - Offset: `0x0`
 - Reset default: `0x0`
-- Reset mask: `0x3`
+- Reset mask: `0x7`
 
 ### Fields
 
 ```wavejson
-{"reg": [{"name": "START", "bits": 1, "attr": ["rw"], "rotate": -90}, {"name": "RNW", "bits": 1, "attr": ["rw"], "rotate": -90}, {"bits": 30}], "config": {"lanes": 1, "fontsize": 10, "vspace": 80}}
+{"reg": [{"name": "START", "bits": 1, "attr": ["rw"], "rotate": -90}, {"name": "RNW", "bits": 1, "attr": ["rw"], "rotate": -90}, {"name": "QUAD", "bits": 1, "attr": ["rw"], "rotate": -90}, {"bits": 29}], "config": {"lanes": 1, "fontsize": 10, "vspace": 80}}
 ```
 
 |  Bits  |  Type  |  Reset  | Name   | Description                   |
 |:------:|:------:|:-------:|:-------|:------------------------------|
-|  31:2  |        |         |        | Reserved                      |
+|  31:3  |        |         |        | Reserved                      |
+|   2    |   rw   |   0x0   | QUAD   | Quad spi mode                 |
 |   1    |   rw   |   0x0   | RNW    | Read Not Write operation mode |
 |   0    |   rw   |   0x0   | START  | Start operation               |
 
