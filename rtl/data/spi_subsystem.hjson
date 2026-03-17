@@ -1,0 +1,19 @@
+{ name: "spi_subsystem"
+  clock_primary: "clk_i"
+  bus_interfaces: [
+    { protocol: "reg_iface", direction: "device" }
+  ]
+  regwidth: "32"
+
+  registers: [
+    { name: "CONTROL"
+      desc: "Control register"
+      swaccess: "rw"
+      hwaccess: "hrw"
+      fields: [
+        { bits: "0", name: "USE_AXI", desc: "selects between the two flash controllers, as flash master and interrupt source", resval: "0x0" }
+        { bits: "31", name: "UNUSED", desc: "unused", resval: "0x0" }
+      ]
+    }
+  ]
+}

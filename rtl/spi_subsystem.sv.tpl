@@ -2,6 +2,13 @@
 // Solderpad Hardware License, Version 2.1, see LICENSE.md for details.
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 
+// *** CRITICAL ***
+// TODO: dma_reg_pkg no longer exists , thus :
+// * input in the port was commented in this module
+// * input in the port was commented in w25q128jw_controller
+// * whole body of w25q128jw_controller was commented
+// * assignment to external_dma_hw2reg_o commented in this module (if w25_ctr not generated)
+
 <%
   base_peripheral_domain = xheep.get_base_peripheral_domain()
 %>
@@ -9,16 +16,17 @@
 module spi_subsystem
   import core_v_mini_mcu_pkg::*;
   import spi_host_reg_pkg::*;
+  // import dma_reg_pkg::*;
 #(
     parameter int DataWidth = 64,
 	  parameter int AddrWidth = 64,
-    parameter logic ByteOrder = 1;  // 1 = little endian , 0 = big endian
+    parameter logic ByteOrder = 1,  // 1 = little endian , 0 = big endian
     parameter type reg_req_t = logic,
     parameter type reg_rsp_t = logic,
     parameter type axi_req_t = logic,
-    parameter type axi_resp_t = logic
+    parameter type axi_resp_t = logic,
     parameter type obi_req_t = logic,
-    parameter type obi_resp_t = logic,
+    parameter type obi_resp_t = logic
 
 )(
 
@@ -38,7 +46,7 @@ module spi_subsystem
 
     // AXI interface
     input  axi_req_t  axi_req_i,
-    output axi_resp_t axi_rsp_o
+    output axi_resp_t axi_rsp_o,
 
     // spi_subsystem configuration interface (reg)
     input  reg_req_t  top_reg_req_i, 
@@ -49,11 +57,11 @@ module spi_subsystem
     output reg_rsp_t  spihost_reg_rsp_o,
 
     // w25q128jw flash controller configuration interface
-    input  reg_req_t  flash_ctr_reg_req_i,
-    output reg_rsp_t  flash_ctr_reg_rsp_o,
+    input  reg_req_t  w25_ctr_reg_req_i,
+    output reg_rsp_t  w25_ctr_reg_rsp_o,
 
     // DMA hw controller register direct access
-    output dma_reg_pkg::dma_hw2reg_t external_dma_hw2reg_o,
+    // output dma_reg_pkg::dma_hw2reg_t external_dma_hw2reg_o,
 
     // flash controller interrupt
     output logic w25q128jw_controller_intr_o,
@@ -99,6 +107,8 @@ module spi_subsystem
 
   obi_resp_t obi_rsp_unused;
   reg_rsp_t reg_rsp_unused;
+  assign reg_rsp_unused = '0;
+  assign obi_rsp_unused = '0;
 
 % if base_peripheral_domain.contains_interface('obi'):
 
@@ -174,8 +184,9 @@ module spi_subsystem
       .spimemio_resp_o(spimemio_obi_resp_o)
   );
 
-% else
+% else:
 
+always_comb begin
   spi_flash_sck_o = ot_spi_sck;
   spi_flash_sck_en_o = ot_spi_sck_en;
   spi_flash_csb_o = ot_spi_csb;
@@ -187,55 +198,103 @@ module spi_subsystem
   spi_flash_intr_event_o = ot_spi_intr_event;
   spi_flash_rx_valid_o = ot_spi_rx_valid;
   spi_flash_tx_ready_o = ot_spi_tx_ready;
+end
 
-
-  assign reg_rsp_unused = '0;
-  assign obi_rsp_unused = '0;
-  spimemio_obi_resp_o = obi_rsp_unused;
-  spimemio_reg_rsp_o = reg_rsp_unused;
+  assign spimemio_obi_resp_o = obi_rsp_unused;
+  assign spimemio_reg_rsp_o = reg_rsp_unused;
 
 %endif
 
-reg_req_t muxed_controllers_reg_req;
-reg_rsp_t muxed_controllers_reg_rsp;
+% if base_peripheral_domain.contains_interface('axi'):
+
+  // AXI to flash controller
+  reg_req_t reg_req_from_a2f_ctr;
+  reg_rsp_t reg_rsp_to_a2f_ctr;
+
+  axi_to_flash_controller #(
+      .ByteOrder,
+      .AddrWidth,   // behavior differs depending from dataWidth, generated HW is always the same.
+      .FlashAddrW(24),
+      .DataWidth,
+      .axi_req_t(axi_req_t),
+      .axi_resp_t(axi_resp_t),
+      .reg_req_t(reg_req_t),
+      .reg_rsp_t(reg_rsp_t)
+  ) axi_to_flash_controller_i (
+      .clk_i,
+      .rst_ni,
+
+      // Enable by xspi register
+      .en_i(reg2hw.control.use_axi.q),
+
+      // register interface to SPI controller
+      .spi_host_reg_req_o(reg_req_from_a2f_ctr),
+      .spi_host_reg_rsp_i(reg_rsp_to_a2f_ctr),
+
+      // SPI controller status direct connection from hw2reg
+      .external_spi_host_hw2reg_status_i(external_spi_host_hw2reg_status),
+
+      // AXI interface
+      .axi_req_i(axi_req_i),
+      .axi_rsp_o(axi_rsp_o)
+  );
+
+% else:
+
+  assign axi_rsp_o = '0;
+  
+% endif
+
+  reg_req_t muxed_controllers_reg_req;
+  reg_rsp_t muxed_controllers_reg_rsp;
 
 % if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
 
   // w25q128jw_controller
-  reg_req_t reg_req_from_w25_cnt;
-  reg_rsp_t reg_rsp_to_w25_cnt;
+  reg_req_t reg_req_from_w25_ctr;
+  reg_rsp_t reg_rsp_to_w25_ctr;
 
   w25q128jw_controller #(
-      .reg_req_t(reg_pkg::reg_req_t),
-      .reg_rsp_t(reg_pkg::reg_rsp_t)
+      .reg_req_t(reg_req_t), // useful addr is always 31:0
+      .reg_rsp_t(reg_rsp_t)
   ) w25q128jw_controller_i (
       .clk_i,
       .rst_ni,
 
       // Register interface with master
-      .reg_req_i(flash_ctr_reg_req_i),
-      .reg_rsp_o(flash_ctr_reg_rsp_o),
+      .reg_req_i(w25_ctr_reg_req_i),
+      .reg_rsp_o(w25_ctr_reg_rsp_o),
 
       // Interrupt signal
       .w25q128jw_controller_intr_o,
 
-      //DMA hw controller
-      .external_dma_hw2reg_o,
+      // DMA hw controller
+      // .external_dma_hw2reg_o,
 
-      //spi_host reg2hw.status direct access
+      // spi_host reg2hw.status direct access
       .external_spi_host_hw2reg_status_i(external_spi_host_hw2reg_status),
 
       // Register interface with spi_host (slave)
-      .spi_host_reg_req_o(reg_req_from_w25_cnt),
-      .spi_host_reg_rsp_i(reg_rsp_to_w25_cnt),
+      .spi_host_reg_req_o(reg_req_from_w25_ctr),
+      .spi_host_reg_rsp_i(reg_rsp_to_w25_ctr),
 
       // Handshake from DMA hw
       .dma_ready_i,
       .dma_done_i
   );
 
+% else:
+
+  assign w25_ctr_reg_rsp_o = '0;
+  assign w25q128jw_controller_intr_o = '0;
+  // assign external_dma_hw2reg_o = '0;
+
+% endif
+
+% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
 
 % if base_peripheral_domain.contains_interface('axi'):
+
   // // Multiplexer - select the active flash controller
     // among:
     // w25q128jw_controller - driven by external register interface
@@ -244,36 +303,38 @@ reg_rsp_t muxed_controllers_reg_rsp;
   always_comb begin
     if(reg2hw.control.use_axi.q) begin
 
-      muxed_controllers_reg_req = reg_req_from_a2f_cnt;
-      reg_rsp_to_a2f_cnt = muxed_controllers_reg_rsp;
-      reg_rsp_to_w25_cnt = reg_rsp_unused;
+      muxed_controllers_reg_req = reg_req_from_a2f_ctr;
+      reg_rsp_to_a2f_ctr = muxed_controllers_reg_rsp;
+      reg_rsp_to_w25_ctr = reg_rsp_unused;
 
     end else begin
 
-      muxed_controllers_reg_req = reg_req_from_w25_cnt;
-      reg_rsp_to_a2f_cnt = reg_rsp_unused;
-      reg_rsp_to_w25_cnt = muxed_controllers_reg_rsp;
+      muxed_controllers_reg_req = reg_req_from_w25_ctr;
+      reg_rsp_to_a2f_ctr = reg_rsp_unused;
+      reg_rsp_to_w25_ctr = muxed_controllers_reg_rsp;
 
     end
   end
 
-% else
+% else:
 
-  muxed_controllers_reg_req = reg_req_from_w25_cnt;
-  reg_rsp_to_w25_cnt = muxed_controllers_reg_rsp;
+  assign muxed_controllers_reg_req = reg_req_from_w25_ctr;
+  assign reg_rsp_to_w25_ctr = muxed_controllers_reg_rsp;
 
 % endif
 
-% else
+% else:
 
 % if base_peripheral_domain.contains_interface('axi'):
  
-  muxed_controllers_reg_req = reg_req_from_a2f_cnt;
-  reg_rsp_to_a2f_cnt = muxed_controllers_reg_rsp;
+  assign muxed_controllers_reg_req = reg_req_from_a2f_ctr;
+  assign reg_rsp_to_a2f_ctr = muxed_controllers_reg_rsp;
 
-% else
+% else:
+  
+  assign muxed_controllers_reg_req = '0;
 
-  muxed_controllers_reg_req = '0;
+% endif
 
 % endif
 
@@ -295,8 +356,8 @@ reg_rsp_t muxed_controllers_reg_rsp;
 
   reg_mux #(
       .NoPorts(2),
-      .req_t  (reg_pkg::reg_req_t),
-      .rsp_t  (reg_pkg::reg_rsp_t),
+      .req_t  (reg_req_t),
+      .rsp_t  (reg_rsp_t),
       .AW     (AddrWidth),
       .DW     (32)
   ) reg_mux_i (
@@ -307,19 +368,12 @@ reg_rsp_t muxed_controllers_reg_rsp;
       .out_req_o(spi_host_reg_req_mux),
       .out_rsp_i(spi_host_reg_rsp_mux)
   );
-  
-
-  assign w25q128jw_controller_intr_o = '0;
-  assign flash_ctr_reg_rsp_o = '0;
-  assign external_dma_hw2reg_o = '0;
-  logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_ready_unused = dma_ready_i;
-  spi_host_reg_pkg::spi_host_hw2reg_status_reg_t external_spi_host_hw2reg_status_unused = external_spi_host_hw2reg_status;
 
 
   // OpenTitan SPI Snitch Version used for booting
   spi_host #(
-      .reg_req_t(reg_pkg::reg_req_t),
-      .reg_rsp_t(reg_pkg::reg_rsp_t)
+      .reg_req_t(reg_req_t),
+      .reg_rsp_t(reg_rsp_t)
   ) ot_spi_i (
       .clk_i,
       .rst_ni,
@@ -367,45 +421,6 @@ reg_rsp_t muxed_controllers_reg_rsp;
   );
 
 % if base_peripheral_domain.contains_interface('axi'):
-
-  // AXI to flash controller
-  reg_req_t reg_req_from_a2f_cnt;
-  reg_rsp_t reg_rsp_to_a2f_cnt;
-
-  axi_to_flash_controller #(
-      .ByteOrder,
-      .AddrWidth,
-      .FlashAddrW(24),
-      .DataWidth,
-      .axi_req_t(axi_req_t),
-      .axi_resp_t(axi_resp_t),
-      .reg_req_t(reg_req_t),
-      .reg_rsp_t(reg_rsp_t)
-  ) axi_to_flash_controller_i (
-      .clk_i,
-      .rst_ni,
-
-      // Enable by xspi register
-      .en_i(reg2hw.control.use_axi.q),
-
-      // register interface to SPI controller
-      .spi_host_reg_req_o(reg_req_from_a2f_cnt),
-      .spi_host_reg_rsp_i(reg_rsp_to_a2f_cnt),
-
-      // SPI controller status direct connection from hw2reg
-      .external_spi_host_hw2reg_status_i(external_spi_host_hw2reg_status),
-
-      // AXI interface
-      .axi_req_i(axi_req_i),
-      .axi_rsp_o(axi_rsp_o)
-  );
-
-% else
-
-  assign axi_rsp_o = '0;
-  
-% endif
-
 `ifndef SYNTHESIS
 
   always_ff @(posedge clk_i) begin : yosys_spi_write
@@ -416,5 +431,7 @@ reg_rsp_t muxed_controllers_reg_rsp;
   end
 
 `endif
+% else:
+% endif
 
 endmodule  // spi_subsystem

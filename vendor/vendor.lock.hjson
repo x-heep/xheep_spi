@@ -30,4 +30,36 @@
       rev: 8e8c209ea559d3b54f45cf30fcce95ce70ff5e49
     }
   }
+  lowrisc_opentitan:
+  {
+    upstream:
+    {
+      url: https://github.com/lowRISC/opentitan.git
+      rev: 47a0f4798febd9e53dd131ef8c8c2b0255d8c139
+    }
+  }
+  pulp_platform_register_interface:
+  {
+    upstream:
+    {
+      url: https://github.com/pulp-platform/register_interface.git
+      rev: 7cf6ae7d8bc14af2c83e3178e068d79271b20815
+    }
+  }
+  pulp_platform_axi:
+  {
+    upstream:
+    {
+      url: https://github.com/pulp-platform/axi.git
+      rev: 442ff3375710513623f95944d66cc2bd09b2f155
+    }
+  }
+  pulp_platform_common_cells:
+  {
+    upstream:
+    {
+      url: https://github.com/pulp-platform/common_cells.git
+      rev: cf08cc1068e782638185b8316e1ebc0ef90596e7
+    }
+  }
 }
