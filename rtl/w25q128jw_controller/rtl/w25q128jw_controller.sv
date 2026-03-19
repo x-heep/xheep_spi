@@ -1422,5 +1422,3 @@ module w25q128jw_controller
       .devmode_i(1'b1)
   );
 endmodule
-
-
