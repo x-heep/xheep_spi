@@ -339,19 +339,6 @@ module axi_to_flash_controller
     wr_queue_buffer_be_MSH = wr_queue_buffer_be_q[DataBytes-1:DataBytes/2];
   end
 
-// In simulation (not FPGA_SYNTHESIS and not SYNTHESIS), we skip the flash wait and erase FSMs
-// This is mandatory as otherwise the controller will be stuck in FWAIT FSM in simulation
-logic pass_fwait;
-`ifndef FPGA_SYNTHESIS
-`ifndef SYNTHESIS
-  assign pass_fwait = 1'b1;
-`else
-  assign pass_fwait = 1'b0;
-`endif
-`else
-  assign pass_fwait = 1'b0;
-`endif
-
   // // // FSM sequential logic
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -873,11 +860,7 @@ logic pass_fwait;
       // Polls the flash Status Register 1 (SR1) to check if the flash is busy
       // The BUSY bit (bit 0) is set during erase/program operations in spi_host
       // This FSM is called multiple times during a write operation:
-      // IN SIM:
-      //   fwait_cnt = 0: After READ  -> bypass wait, go to MODIFY
-      //   fwait_cnt = 1: After WRITE -> bypass wait, complete
       //
-      // In NOT SIM:
       //   fwait_cnt = 0: After READ  -> wait for flash ready, then go to ERASE
       //   fwait_cnt = 1: After ERASE -> wait for flash ready, then go to MODIFY
       //   fwait_cnt = 2: After WRITE -> wait for flash ready, then complete
@@ -886,58 +869,8 @@ logic pass_fwait;
       // Hence the operation only finishes when all the data has been written back into flash
       TOP_FWAIT: begin
         case (fwait_state_q)
-          // IDLE: Check for simulation bypass or start flash wait FSM 
           FWAIT_IDLE: begin
-            if (pass_fwait) begin
-              // SIMULATION MODE: Skip flash wait 
-              case (fwait_cnt_q)
-                // After READ: Skip ERASE, go directly to MODIFY
-                2'h0: begin
-                  fwait_cnt_d   = 2'h1;
-                  fwait_state_d = FWAIT_IDLE;
-                  top_state_d   = TOP_MODIFY;
-                end
-                // After MODIFY+WRITE: Operation complete
-                2'h1: begin
-                    fwait_cnt_d = 2'h0;
-                    // If only the first sector out of two has been written, return to READ and do the second
-                    if (first_sector_write_q) begin
-                      second_sector_write_d = 1;
-                      fwait_state_d = FWAIT_IDLE;
-                      top_state_d = TOP_READ;
-                    end
-                    // If the beat is completely written
-                    else begin
-                      beat_count_d = beat_count_q + 1;
-                      if (beat_count_d < beat_number_q) begin
-                        // // Evaluate address of next beat
-                        // If there are more beats to write then return to READ to proces the next one
-                        // This controller assumes to work only in INCR bursts
-                        // addr_0 = ax_addr
-                        // addr_0_alligned = INT(addr_0 / size) * size
-                        // addr_N = addr_0_alligned + size*N
-                        beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q)*beat_size_q;
-                        fwait_state_d = FWAIT_IDLE;
-                        top_state_d = TOP_READ;
-                      end
-                      if (beat_count_d == beat_number_q) begin
-                        // If there are no more beats to process, go to AXIRESP to make the completition response to the AXI manager
-                        top_state_d = TOP_AXIRESP;
-                        fwait_state_d = FWAIT_IDLE;
-                        // also, reset some registers for the next transaction
-                        first_sector_write_d = 0;
-                        second_sector_write_d = 0;
-                      end
-                    end
-                end
-                default: begin
-                end
-              endcase
-            end 
-            else begin
-              // SYNTHESIS/FPGA MODE: don't skip FWAIT , start polling flash Status Register 1
-              fwait_state_d = FWAIT_SET_RXWM_R;
-            end
+            fwait_state_d = FWAIT_SET_RXWM_R;
           end
           FWAIT_SET_RXWM_R: begin
             // Set RX watermark to 1 word so we get notified when status byte arrives
@@ -1073,7 +1006,7 @@ logic pass_fwait;
                       // There are still pages to program for the current sector
                       fwait_state_d = FWAIT_IDLE;
                       top_state_d   = TOP_WRITE;
-                      write_state_d = WRITE_WE_CHECK_TX_FIFO;
+                      write_state_d = WRITE_IDLE;
                     end else begin
                       // Current sector write is complete
                       fwait_cnt_d = 2'h0;
@@ -1225,7 +1158,7 @@ logic pass_fwait;
               // Go to FWAIT FSM to poll status register until erase completes
               erase_state_d = ERASE_IDLE;
               top_state_d = TOP_FWAIT;
-              fwait_state_d = FWAIT_SET_RXWM_R; // Start polling (skip FWAIT_IDLE since we know we need to wait: NO SIM)
+              fwait_state_d = FWAIT_IDLE; // Start polling
             end
           end
           default: begin

@@ -54,7 +54,7 @@ module spiflash (
     inout wire io2,
     inout wire io3
 );
-  localparam verbose = 1;
+  localparam verbose = 0;
   localparam integer latency = 8;
 
   logic [7:0] buffer;
@@ -70,11 +70,12 @@ module spiflash (
   logic [7:0] spi_out;
   logic spi_io_vld;
 
-  logic powered_up = 0;
+  //logic powered_up = 0;
+  logic powered_up = 1;                           // FORCED POWER UP FOR SIM PURPOSES BUT NOT FINAL
   logic write_enable = 0;
   logic write_enable_reset = 0;
 
-  localparam [3:0] mode_spi = 1;
+  localparam [3:0] mode_spi = 0;
   localparam [3:0] mode_dspi_rd = 2;
   localparam [3:0] mode_dspi_wr = 3;
   localparam [3:0] mode_qspi_rd = 4;
@@ -112,6 +113,23 @@ module spiflash (
 
   // 16 MB (128Mb) Flash
   logic [7:0] memory[16*1024*1024];
+
+  // _-*-_-*-_-*-_-*-_-*-_-*-_ USER INITIALIZATION _-*-_-*-_-*-_-*-_-*-_-*-_
+  
+  logic [7:0] storage[16];
+
+  assign memory[0] = 8'b11101110;
+  
+  initial begin
+    for (int i = 0; i < 4096; i++) begin
+      memory[24'h001000 + i] = (8'hff - i[7:0]);
+    end
+    for (int i = 0; i < 16; i++) begin
+      storage[i] = memory[24'h001000 + i];
+    end
+  end
+
+  // _-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_
 
   task spi_action;
     begin
