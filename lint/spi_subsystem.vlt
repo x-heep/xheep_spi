@@ -17,6 +17,14 @@ lint_off -rule SYMRSVDWORD -file "*rtl/spi_device_reg_pkg*" -match "*Symbol matc
 
 
 // ============================================================================================
+//                                      sram_wrapper
+// ============================================================================================
+
+// parameter int unsigned NumWords = 13'h400
+lint_off -rule WIDTH -file "*sim/sram_wrapper*" -match "*Operator VAR 'NumWords' expects 32 bits on the Initial value, but Initial value's CONST '13'h400' generates 13 bits*"
+
+
+// ============================================================================================
 //                                      tc_sram
 // ============================================================================================
 
@@ -57,8 +65,11 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator SUB
 // sector_addr_of_last_byte =  ((beat_addr_q + beat_size_q) >> 12) << 12;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'beat_size_q' generates 8 bits*"
 
+//if (word_count_d == SE_WSIZE) begin
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 11 bits*"
+
 // sect_buffer_addr = '0 + word_count_q;
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'word_count_q' generates 10 bits*"
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'word_count_q' generates 11 bits*"
 
 // if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error && word_count_d == SE_WSIZE) begin
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 10 bits*"
@@ -70,19 +81,37 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASS
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 24 bits on the Assign RHS, but Assign RHS's VARREF 'beat_addr_d' generates 64 bits*"
 
 // sect_buffer_addr = '0 + page_count_q + word_count_q;
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'page_count_q' generates 4 bits*"
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'page_count_q' generates 5 bits*"
 
 // if (wait_latency_count_d == SectorBufferLatency) begin
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'wait_latency_count_d' generates 1 bits*"
+
+// if (word_count_d < SE_WSIZE) begin
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 11 bits*"
 
 // if (word_count_d <  PAGE_WSIZE) write_state_d = WRITE_PP_PAGE_WRITE_1;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 10 bits*"
 
 // if ( page_count_q == NumPagesInSector ) begin
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'page_count_q' generates 4 bits*"
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'page_count_q' generates 5 bits*"
 
 // if ( page_count_q < NumPagesInSector ) begin
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT expects 32 bits on the LHS, but LHS's VARREF 'page_count_q' generates 4 bits*"
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT expects 32 bits on the LHS, but LHS's VARREF 'page_count_q' generates 5 bits*"
+
+// localparam int SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'SE_WSIZE' generates 13 bits*"
+
+// localparam int SectorBuffer_AddrWidth = sizeInBits(SE_WSIZE);
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator FUNCREF 'sizeInBits' expects 32 bits on the Function Argument, but Function Argument's VARREF 'SE_WSIZE' generates 13 bits*"
+
+// ({8'h0 , flash_addr_q} & 32'h00fff000) |
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator AND expects 33 bits on the LHS, but LHS's REPLICATE generates 32 bits*"
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator AND expects 33 bits on the RHS, but RHS's CONST '32'hfff000' generates 32 bits*"
+
+// spi_host_reg_req_o.wdata = bitfield_byteswap32(
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator FUNCREF 'bitfield_byteswap32' expects 32 bits on the Function Argument, but Function Argument's OR generates 33 bits*"
+
+
 
 // lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "**"
 
@@ -136,4 +165,6 @@ lint_off -rule WIDTH -file "*rtl/spi_subsystem*" -match "*Output port connection
 // ============================================================================================
 
 lint_off -rule WIDTH -file "*picosoc/spimemio*" -match "**"
+lint_off -rule CASEOVERLAP -file "*picosoc/spimemio*" -match "**"
+lint_off -rule CASEINCOMPLETE -file "*picosoc/spimemio*" -match "**"
 

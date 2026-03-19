@@ -16,7 +16,6 @@
 module spi_subsystem
   import core_v_mini_mcu_pkg::*;
   import spi_host_reg_pkg::*;
-  // import dma_reg_pkg::*;
 #(
     parameter int DataWidth = 64,
 	  parameter int AddrWidth = 64,
@@ -60,8 +59,12 @@ module spi_subsystem
     input  reg_req_t  w25_ctr_reg_req_i,
     output reg_rsp_t  w25_ctr_reg_rsp_o,
 
+## dma_reg_pkg is not in this repo, for simulation purposes it is required to remove this output
+% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
     // DMA hw controller register direct access
     // output dma_reg_pkg::dma_hw2reg_t external_dma_hw2reg_o,
+% else:
+% endif
 
     // flash controller interrupt
     output logic w25q128jw_controller_intr_o,
@@ -251,6 +254,7 @@ end
 % if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
 
   // w25q128jw_controller
+  import dma_reg_pkg::*;
   reg_req_t reg_req_from_w25_ctr;
   reg_rsp_t reg_rsp_to_w25_ctr;
 
@@ -269,7 +273,7 @@ end
       .w25q128jw_controller_intr_o,
 
       // DMA hw controller
-      // .external_dma_hw2reg_o,
+      .external_dma_hw2reg_o,
 
       // spi_host reg2hw.status direct access
       .external_spi_host_hw2reg_status_i(external_spi_host_hw2reg_status),
@@ -287,7 +291,6 @@ end
 
   assign w25_ctr_reg_rsp_o = '0;
   assign w25q128jw_controller_intr_o = '0;
-  // assign external_dma_hw2reg_o = '0;
 
 % endif
 
@@ -316,21 +319,21 @@ end
     end
   end
 
-% else:
+% else: ## w25_ctr , no axi
 
   assign muxed_controllers_reg_req = reg_req_from_w25_ctr;
   assign reg_rsp_to_w25_ctr = muxed_controllers_reg_rsp;
 
 % endif
 
-% else:
+% else: ## no w25_ctr , axi
 
 % if base_peripheral_domain.contains_interface('axi'):
  
   assign muxed_controllers_reg_req = reg_req_from_a2f_ctr;
   assign reg_rsp_to_a2f_ctr = muxed_controllers_reg_rsp;
 
-% else:
+% else: ## no w25_ctr , no axi
   
   assign muxed_controllers_reg_req = '0;
 

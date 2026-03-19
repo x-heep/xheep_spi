@@ -6,21 +6,30 @@
   Uses a local scratchpad memory as sector buffer and a fifo as queue write beats, 
   former connected directly to spi_host's data fifos to perform data transfers without CPU or DMA intervention (RAM access is avoided).
 
-  // axi_burst = INC always
+  axi_burst = INC always
  
   Author : Alessandro Barocci
  
-  Based on w25q128jw_controller.sv by Thomas Lenges and Davide Schiavone
+  Based on XHEEP's w25q128jw_controller.sv
 
   TODO : add some comments from original w25q128jw_controller ? Improve readability
   TODO : between first and second sector write of the single beat might not be required to FWAIT , maybe even between beats
   TODO : correct code to avioid WIDTH warnings
 
+  TODO : at last, remove verilator scope signals in tc_sram (and also spiflash)
+
   // CRITICAL //
   TODO : why do we access registers @ SPI_HOST_COMMAND_OFFSET when we modify the rxwm rather than SPI_HOST_CONTROL_OFFSET ?
-  << THIS HAS BEEN CORRECTED >>
+  << CORRECTED >>
 
   TODO : probably should use direct access to spi_host_hw2reg.status.rxwm rather than sampled with register interface
+  << CORRECTED >>
+
+  TODO : NO POWERUP ?!?!?!?!?!?
+  << FORCED AT 1 IN SPI_FLASH >>
+
+  // MORE CHANGES //
+  1) dual and quad spi support (thus dummy cycles) (register cfg + states)
 
  */
  
@@ -30,11 +39,11 @@ module axi_to_flash_controller
 #(
 
   localparam int MaxBeats = 17,
-  localparam int MaxBeatsDW = sizeInBits(MaxBeats),
-  localparam int NumPagesInSector = 32'(SE_WSIZE) / 32'(PAGE_WSIZE),
-  localparam int PageCountDW = sizeInBits(NumPagesInSector),
+  localparam int MaxBeatsDW = sizeInBits(MaxBeats+1),
+  localparam int SE_PSIZE = 32'(SE_WSIZE) / 32'(PAGE_WSIZE),
+  localparam int PageCountDW = sizeInBits(SE_PSIZE+1),
   localparam int SectorBufferLatency = 1,
-  localparam int SecBuffLatencyDW = sizeInBits(SectorBufferLatency),
+  localparam int SecBuffLatencyDW = sizeInBits(SectorBufferLatency+1),
   parameter logic ByteOrder = 1, // 1 == Little Endian , 0 == Big Endian  ; @ 0 , beat_queues swap bytes.
   parameter int AddrWidth = 64,
   parameter int FlashAddrW = 24,
@@ -148,7 +157,7 @@ module axi_to_flash_controller
   SE_BSIZE = 13'h1000,  // Sector size in bytes
   PAGE_WSIZE = 13'h40,  // Page size in words
   PAGE_BSIZE = 13'h100;  // Page size in bytes
-  localparam int SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE));
+  localparam int SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));
 
   // Byte swap function
   function automatic [31:0] bitfield_byteswap32(input [31:0] adress_to_swap);
@@ -218,7 +227,7 @@ module axi_to_flash_controller
   // Waits for flash internal operations to complete (erase/program)
   // by polling the flash status register (Read Status Register 1) (Not necessary in simulation)
   typedef enum logic [sizeInBits(11)-1:0] {
-    FWAIT_IDLE,               // If in simulation, bypass wait. Else, go through FWAIT & ERASE FSMs
+    FWAIT_IDLE,
     FWAIT_SET_RXWM_R,         // Read current RX watermark setting (within SPI Host Control Register)
     FWAIT_SET_RXWM_W,         // Set RX watermark to 1 (for single word read: flash status register 1)
     FWAIT_SPI_CHECK_TX_FIFO,  // Check if TX FIFO has space
@@ -722,11 +731,7 @@ logic pass_fwait;
           READ_WAIT_RXWM: begin
             // Wait for flash data to be present in the rx_fifo before sending a pop request (check whether wm is reached)
             // This is why we set rx_wm to 1
-            spi_host_reg_req_offset  = SPI_HOST_STATUS_OFFSET;
-            spi_host_reg_req_o.write = 1'b0;
-            spi_host_reg_req_o.valid = 1'b1;
-            // Next state evaluation
-            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error && spi_host_reg_rsp_i.rdata[20]) begin
+            if (external_spi_host_hw2reg_status_i.rxwm.d) begin
               // wm Flag is sampled, valid and set
               if (rnw_q) begin
                 // Read
@@ -793,8 +798,7 @@ logic pass_fwait;
             If AXI's DataWidth (and this module's) is 64, beat queues and their buffer also are 64 bit wide,
             however the width of spi_host and its fifos (and the flash) stays the same at 32 bits.
             This means that two states are required to load data from rx_fifo to rd_beat_queue_buffer, since beat_size can be > 4.
-            
-            Here we write the lower 32 bites of the rd_queue_buffer
+            Here we write the lower 32 bites of the rd_queue_buffer.
             */
             // Bring the beats into rd_beat_queue
             // Send a pop request to rx_fifo
@@ -895,9 +899,36 @@ logic pass_fwait;
                 end
                 // After MODIFY+WRITE: Operation complete
                 2'h1: begin
-                  fwait_cnt_d = 2'h0;
-                  fwait_state_d = FWAIT_IDLE;
-                  top_state_d = TOP_AXIRESP;
+                    fwait_cnt_d = 2'h0;
+                    // If only the first sector out of two has been written, return to READ and do the second
+                    if (first_sector_write_q) begin
+                      second_sector_write_d = 1;
+                      fwait_state_d = FWAIT_IDLE;
+                      top_state_d = TOP_READ;
+                    end
+                    // If the beat is completely written
+                    else begin
+                      beat_count_d = beat_count_q + 1;
+                      if (beat_count_d < beat_number_q) begin
+                        // // Evaluate address of next beat
+                        // If there are more beats to write then return to READ to proces the next one
+                        // This controller assumes to work only in INCR bursts
+                        // addr_0 = ax_addr
+                        // addr_0_alligned = INT(addr_0 / size) * size
+                        // addr_N = addr_0_alligned + size*N
+                        beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q)*beat_size_q;
+                        fwait_state_d = FWAIT_IDLE;
+                        top_state_d = TOP_READ;
+                      end
+                      if (beat_count_d == beat_number_q) begin
+                        // If there are no more beats to process, go to AXIRESP to make the completition response to the AXI manager
+                        top_state_d = TOP_AXIRESP;
+                        fwait_state_d = FWAIT_IDLE;
+                        // also, reset some registers for the next transaction
+                        first_sector_write_d = 0;
+                        second_sector_write_d = 0;
+                      end
+                    end
                 end
                 default: begin
                 end
@@ -1006,11 +1037,8 @@ logic pass_fwait;
           FWAIT_WAIT_RXWM: begin
             // Wait for flash status to be present in the rx_fifo before sending a pop request (check whether wm is reached)
             // This is why we set rx_wm to 1
-            spi_host_reg_req_offset  = SPI_HOST_STATUS_OFFSET;
-            spi_host_reg_req_o.write = 1'b0;
-            spi_host_reg_req_o.valid = 1'b1;
             // Next state evaluation
-            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error && spi_host_reg_rsp_i.rdata[20]) begin
+            if (external_spi_host_hw2reg_status_i.rxwm.d) begin
               fwait_state_d = FWAIT_READ_FLASH_STATUS;
             end
           end
@@ -1041,37 +1069,52 @@ logic pass_fwait;
                   end
                   // After WRITE:
                   2'h2: begin
-                    fwait_cnt_d = 2'h0;
-                    // If only the first sector out of two has been written, return to READ and do the second
-                    if (first_sector_write_q) begin
-                      second_sector_write_d = 1;
+                    if(page_count_q < SE_PSIZE) begin
+                      // There are still pages to program for the current sector
                       fwait_state_d = FWAIT_IDLE;
-                      top_state_d = TOP_READ;
-                    end
-                    // If the beat is completely written
-                    else begin
-                      beat_count_d = beat_count_q + 1;
-                      if (beat_count_d < beat_number_q) begin
-                        // // Evaluate address of next beat
-                        // If there are more beats to write then return to READ to proces the next one
-                        // This controller assumes to work only in INCR bursts
-                        // addr_0 = ax_addr
-                        // addr_0_alligned = INT(addr_0 / size) * size
-                        // addr_N = addr_0_alligned + size*N
-                        beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q)*beat_size_q;
+                      top_state_d   = TOP_WRITE;
+                      write_state_d = WRITE_WE_CHECK_TX_FIFO;
+                    end else begin
+                      // Current sector write is complete
+                      fwait_cnt_d = 2'h0;
+                      // Reset page counter
+                      page_count_d = 0;
+                      if (first_sector_write_q) begin
+                        // If only the first sector out of two has been written, return to READ and do the second
+                        second_sector_write_d = 1;
                         fwait_state_d = FWAIT_IDLE;
                         top_state_d = TOP_READ;
-                      end
-                      if (beat_count_d == beat_number_q) begin
-                        // If there are no more beats to process, go to AXIRESP to make the completition response to the AXI manager
-                        top_state_d = TOP_AXIRESP;
-                        fwait_state_d = FWAIT_IDLE;
-                        // also, reset some registers for the next transaction
-                        first_sector_write_d = 0;
-                        second_sector_write_d = 0;
+                      end else begin
+                        // Current beat write is completed
+                        beat_count_d = beat_count_q + 1;
+                        if (beat_count_d < beat_number_q) begin
+                          // There are more beats to go for this AXI transmission
+                          /*
+
+                          Evaluate address of next beat
+
+                          If there are more beats to write then return to READ to proces the next one
+                          This controller assumes to work only in INCR bursts
+                          addr_0 = axi_addr
+                          addr_0_alligned = INT(addr_0 / size) * size
+                          addr_N = addr_0_alligned + size*N
+                          */
+                          beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q)*beat_size_q;
+                          
+                          fwait_state_d = FWAIT_IDLE;
+                          top_state_d = TOP_READ;
+                        end else begin
+                          // AXI transmission is over
+                          // Reset some registers
+                          first_sector_write_d = 0;
+                          second_sector_write_d = 0;
+
+                          top_state_d = TOP_AXIRESP;
+                          fwait_state_d = FWAIT_IDLE;
+                        end
                       end
                     end
-                  end 
+                  end
                 default: begin  // TODO double check these if begin-end
                 end
               endcase
@@ -1511,8 +1554,6 @@ logic pass_fwait;
             write_state_d = WRITE_WE_CHECK_TX_FIFO;
           end
           WRITE_WE_CHECK_TX_FIFO: begin
-            // Cleat page counter
-            page_count_d = 0;
             // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
             if (external_spi_host_hw2reg_status_i.txqd.d < SPI_FLASH_TX_FIFO_DEPTH[7:0]) begin
               write_state_d = WRITE_WE_FILL_TX_FIFO;
@@ -1603,7 +1644,7 @@ logic pass_fwait;
             end
           end
           WRITE_PP_PAGE_WRITE_1: begin
-            // Send read request to the sector buffer
+            // Send read request to the sector buffer and wait for its Latency cycles before sampling the read data in a buffer
             sect_buffer_req = 1'b1;
             sect_buffer_we = 1'b0;
             sect_buffer_addr = '0 + page_count_q + word_count_q;
@@ -1627,7 +1668,7 @@ logic pass_fwait;
             end
           end
           WRITE_PP_PAGE_WRITE_4: begin
-            // send 32bit word to tx_fifo 
+            // send 32bit word to tx_fifo from the current page in the sector buffer
             spi_host_reg_req_offset = SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
@@ -1667,13 +1708,8 @@ logic pass_fwait;
             };  // Empty + Direction + Speed + Csaat + Length
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
-              if ( page_count_q == NumPagesInSector ) begin
                 top_state_d = TOP_FWAIT;
                 write_state_d = WRITE_IDLE;
-              end
-              if ( page_count_q < NumPagesInSector ) begin
-                write_state_d = WRITE_WE_CHECK_TX_FIFO;
-              end
             end
           end
           default: begin
@@ -1822,9 +1858,7 @@ logic pass_fwait;
 
   // // Sector buffer scratchpad
 
-  localparam int FlashSectorWSize =  4096;
-  localparam int SectorBuffer_NumWords = 1*FlashSectorWSize;
-  localparam int SectorBuffer_AddrWidth = sizeInBits(SectorBuffer_NumWords);
+  localparam int SectorBuffer_AddrWidth = sizeInBits(SE_WSIZE);
   localparam int SectorBuffer_DataWidth = 32;
   localparam int SectorBuffer_DataBytes = SectorBuffer_DataWidth/8;
 
@@ -1839,7 +1873,7 @@ logic pass_fwait;
   assign sect_buffer_addr_resized = sect_buffer_addr[SectorBuffer_AddrWidth-1:0];
 
   sram_wrapper #(
-      .NumWords(SectorBuffer_NumWords),
+      .NumWords(SE_WSIZE),
       .DataWidth(SectorBuffer_DataWidth),
   ) sector_buffer_i (
       .clk_i,

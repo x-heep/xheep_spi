@@ -136,7 +136,7 @@ int main(int argc, char *argv[]){
     uint32_t axi_addr = DEFAULT_AXI_ADDR;
     unsigned int random;
 
-    std::cout << YELLOW << BOLD << "TCL arguments:" << RESET << std::endl;    
+    std::cout << YELLOW << BOLD << "TCL arguments:" << RESET << std::endl;
     
     while ((opt = getopt_long(argc, argv, "w:n:s:a:r", longopts, NULL)) >= 0){
         unsigned long tmp = strtoul(optarg, NULL, 0);
@@ -462,9 +462,9 @@ int main(int argc, char *argv[]){
                     // reg_data[29] = 1; // fullcyc
                     reg_data = reg_data | (0b1 << 29);
                     // reg_data[30] = 0; // cpha
-                    reg_data = reg_data | (0b1 << 30);
+                    reg_data = reg_data | (0b0 << 30);
                     // reg_data[31] = 0; // cpol
-                    reg_data = reg_data | (0b1 << 31);
+                    reg_data = reg_data | (0b0 << 31);
                     genRegWriteReq(dut,base,offset,reg_data);
                     if(dut->spihost_reg_ready_o && !dut->spihost_reg_error_o){
                         state = CFG_SPIHOST_CONTROL;

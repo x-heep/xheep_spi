@@ -178,14 +178,14 @@ module spi_subsystem_tb_wrapper
   logic [3:0] spi_flash_sd_miso;
   
   always_comb begin
-    spi_flash_sck_gated = spi_flash_sck_en ? spi_flash_sck : 1'bz;
+    spi_flash_sck_gated = spi_flash_sck_en ? spi_flash_sck : 1'b0;  // CPOL=0
 
     for ( int i=0 ; i<spi_host_reg_pkg::NumCS ; i++ ) begin
-      spi_flash_csb_gated[i] = spi_flash_csb_en[i] ? spi_flash_csb[i] : 1'bz;
+      spi_flash_csb_gated[i] = spi_flash_csb_en[i] ? spi_flash_csb[i] : 1'b1; // csb is active low
     end
 
     for ( int i=0 ; i<4 ; i++ ) begin
-      spi_flash_sd_mosi_gated[i] = spi_flash_sd_mosi_en[i] ? spi_flash_sd_mosi[i] : 1'bz;
+      spi_flash_sd_mosi_gated[i] = spi_flash_sd_mosi_en[i] ? spi_flash_sd_mosi[i] : 1'b0;
     end
   end
 
@@ -217,7 +217,6 @@ spi_subsystem #(
     .spihost_reg_rsp_o            (spihost_reg_rsp),
     .w25_ctr_reg_req_i            (),
     .w25_ctr_reg_rsp_o            (),
-    //.external_dma_hw2reg_o        (),
     .w25q128jw_controller_intr_o  (w25q128jw_controller_intr_o),
     .dma_ready_i                  (),
     .dma_done_i                   (),
@@ -241,7 +240,7 @@ spiflash u_spiflash (
     .csb    (spi_flash_csb_gated[0]),       // chip select (active low)
     .clk    (spi_flash_sck_gated),          // serial clock
     .io0    (spi_flash_sd_mosi_gated[0]),   // MOSI
-    .io1    (spi_flash_sd_miso[0]),         // MISO
+    .io1    (spi_flash_sd_miso[1]),         // MISO   (1, not 0)
     .io2    (),
     .io3    ()
 );

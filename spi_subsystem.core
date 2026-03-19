@@ -20,9 +20,9 @@ filesets:
       - rtl/reg_pkg.sv
       - rtl/core_v_mini_mcu_pkg.sv
       - rtl/spi_subsystem_reg_pkg.sv
-      - rtl/w25q128jw_controller/rtl/w25q128jw_controller_reg_pkg.sv
-      - rtl/w25q128jw_controller/rtl/w25q128jw_controller.sv
-      - rtl/w25q128jw_controller/rtl/w25q128jw_controller_reg_top.sv
+      # - rtl/w25q128jw_controller/rtl/w25q128jw_controller_reg_pkg.sv
+      # - rtl/w25q128jw_controller/rtl/w25q128jw_controller.sv
+      # - rtl/w25q128jw_controller/rtl/w25q128jw_controller_reg_top.sv
       - rtl/spi_subsystem_reg_top.sv
       - rtl/axi_to_flash_beat_queues.sv
       - rtl/axi_to_flash_controller.sv
@@ -38,7 +38,7 @@ filesets:
 
   files_verilator_waiver:
     files:
-      - lint/w25q128jw_controller.vlt
+      # - lint/w25q128jw_controller.vlt
       - lint/spi_subsystem.vlt
       - lint/obi_spimemio.vlt
     file_type: vlt

@@ -8,9 +8,7 @@ SW_DIR ?= sw
 FUSESOC   := fusesoc
 CORE_NAME := x-heep:ip:spi
 
-TB_ARGS ?= --gen_waves true --num_beats 10 --size_beat 2 --addr 0x00111000 --random_data true
-# TB_ARGS ?= --random_data false
-# make clean-sim TB_ARGS="--random_data false"
+TB_ARGS ?= --random_data false
 
 # w25q128jw_controller
 W25Q_NAME := w25q128jw_controller
