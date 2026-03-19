@@ -72,6 +72,7 @@ module w25q128jw_controller
   FC_WE = 13'h06,  // Write Enable
   FC_SE = 13'h20,  // Sector Erase 4KB
   FC_PP = 13'h02,  // Page Program
+  FC_PPQ = 13'h32,  // Page Program Quad
   // W25Q128JW SIZE CONSTANTS
   SE_WSIZE = 13'h400,  // Sector size in words
   SE_BSIZE = 13'h1000,  // Sector size in bytes
@@ -540,10 +541,17 @@ module w25q128jw_controller
 
           READ_SPI_SEND_CMD_3_QUAD: begin
             // For quad read, we need to send the command in a different format to specify quad mode and length for the second command
-            spi_host_reg_req_offset = SPI_HOST_TXDATA_OFFSET;
+            spi_host_reg_req_offset  = SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
-            flash_address = reg2hw.f_address.q;
+
+            if (reg2hw.control.rnw.q) begin
+              // READ: Use exact flash address from F_ADDRESS register
+              flash_address = reg2hw.f_address.q & 32'h00ffffff;
+            end else begin
+              // WRITE: Use sector-aligned address + current sector iteration offset
+              flash_address = (reg2hw.f_address.q & 32'h00fff000) + sector_iter_offset_q;
+            end
             spi_host_reg_req_o.wdata = (bitfield_byteswap32(flash_address) >> 8) |
                 32'hff000000;  // Address with all 4 bytes to be sent (quad mode)
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
@@ -591,11 +599,17 @@ module w25q128jw_controller
           end
 
           READ_SPI_SEND_CMD_5_QUAD: begin
-            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_offset  = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
-            spi_host_reg_req_o.wdata =
-                spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
+            if (reg2hw.control.rnw.q) begin
+              spi_host_reg_req_o.wdata =
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
+            end else begin
+              // WRITE: read full sector
+              spi_host_reg_req_o.wdata =
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
+            end
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               read_state_d = READ_TRANS;
             end
@@ -1146,9 +1160,15 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             // Compute page address: sector base + sector offset + page offset
-            spi_host_reg_req_o.wdata = (((bitfield_byteswap32(((reg2hw.f_address.q & 32'h00fff000) + (sector_iter_offset_q)) |
-                                           ({28'h0, page_cnt_q} << 8))) >> 8) << 8) |
-                {19'h0, FC_PP};
+            flash_address = ((reg2hw.f_address.q & 32'h00fff000) + sector_iter_offset_q) |
+                  ({28'h0, page_cnt_q} << 8);
+            if (reg2hw.control.quad.q) begin
+              spi_host_reg_req_o.wdata = (bitfield_byteswap32(flash_address) & 32'hffffff00) |
+                  {19'h0, FC_PPQ};
+            end else begin
+              spi_host_reg_req_o.wdata = (bitfield_byteswap32(flash_address) & 32'hffffff00) |
+                  {19'h0, FC_PP};
+            end
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               write_state_d = WRITE_PP_WAIT_READY;
             end
@@ -1246,8 +1266,14 @@ module w25q128jw_controller
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
-            spi_host_reg_req_o.wdata =
-                spi_cmd_pack(SPI_DIR_TX, SPI_SPEED_STD, 1'b0, {11'b0, PAGE_BSIZE - 1'h1});
+            spi_host_reg_req_o.wdata = spi_cmd_pack(
+              SPI_DIR_TX,
+              reg2hw.control.quad.q ? SPI_SPEED_QUAD : SPI_SPEED_STD,
+              1'b0,
+              {
+                11'b0, PAGE_BSIZE - 1'h1
+              }
+            );
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               // ===== CHECK IF MORE PAGES/SECTORS TO PROCESS =====
@@ -1422,5 +1448,3 @@ module w25q128jw_controller
       .devmode_i(1'b1)
   );
 endmodule
-
-
