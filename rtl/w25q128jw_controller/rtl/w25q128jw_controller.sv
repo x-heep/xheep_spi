@@ -801,17 +801,22 @@ module w25q128jw_controller
                     top_state_d = TOP_MODIFY;
                     modify_state_d = MODIFY_IDLE;
                   end
-                  // After WRITE: Flash ready -> operation complete
+                  // After WRITE: Flash ready -> either complete or continue with next sector
                   2'h2: begin
-                    fwait_cnt_d = 2'h0;
+                    fwait_cnt_d   = 2'h0;
                     fwait_state_d = FWAIT_IDLE;
-                    top_state_d = TOP_IDLE;
-                    md_offset_d = 32'h0;  // Reset MODIFY offset for next operation
-                    sector_iter_offset_d = 32'h0; // Reset sector iteration offset for next operation
-                    hw2reg.control.start.de = 1'b1;     // Clear START bit so operation is only done once
-                    hw2reg.control.start.d = 1'b0;
-                    hw2reg.intr_status.de   = 1'b1;     // Set interrupt status (rise IRQ through assignements (see end of module))
-                    hw2reg.intr_status.d = reg2hw.intr_enable.q;
+                    if (reg2hw.length.q == 0) begin
+                      top_state_d = TOP_IDLE;
+                      md_offset_d = 32'h0;  // Reset MODIFY offset for next operation
+                      sector_iter_offset_d = 32'h0; // Reset sector iteration offset for next operation
+                      hw2reg.control.start.de = 1'b1;     // Clear START bit so operation is only done once
+                      hw2reg.control.start.d = 1'b0;
+                      hw2reg.intr_status.de   = 1'b1;     // Set interrupt status (rise IRQ through assignements (see end of module))
+                      hw2reg.intr_status.d = reg2hw.intr_enable.q;
+                    end else begin
+                      top_state_d  = TOP_READ;
+                      read_state_d = READ_IDLE;
+                    end
                   end
                   // If WRITE has multiple pages to modify, continue with next page
                   2'h3: begin
@@ -1279,20 +1284,14 @@ module w25q128jw_controller
               // ===== CHECK IF MORE PAGES/SECTORS TO PROCESS =====
               if (page_cnt_q == 4'hf) begin
                 // All 16 pages in current sector programmed
-                if (reg2hw.length.q == 0) begin
-                  // ===== ALL DATA WRITTEN: Go to FWAIT then complete =====
-                  write_state_d = WRITE_IDLE;
-                  top_state_d = TOP_FWAIT;
-                  fwait_state_d = FWAIT_IDLE;
-                  fwait_cnt_d = 2'h2;
-                  page_cnt_d = 4'b0;  // Reset page counter for time you use the controller
-                end else begin
-                  // ===== MORE SECTORS TO PROCESS: Restart from READ =====
-                  fwait_cnt_d = 2'h0;  // Reset FWAIT counter for next sector
-                  page_cnt_d = 4'b0;  // Reset page counter for next sector
+                // Always wait until flash is not busy before finalizing or moving to next sector.
+                write_state_d = WRITE_IDLE;
+                top_state_d = TOP_FWAIT;
+                fwait_state_d = FWAIT_IDLE;
+                fwait_cnt_d = 2'h2;
+                page_cnt_d = 4'b0;  // Reset page counter for next sector / next operation
+                if (reg2hw.length.q != 0) begin
                   sector_iter_offset_d = sector_iter_offset_q + {19'b0, SE_BSIZE}; // Next sector (+4KB)
-                  top_state_d = TOP_READ;  // Go back to read next sector
-                  write_state_d = WRITE_IDLE;
                 end
               end else begin
                 // ===== MORE PAGES IN CURRENT SECTOR: Program next page =====
