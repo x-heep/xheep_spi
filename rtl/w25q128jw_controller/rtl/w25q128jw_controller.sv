@@ -786,25 +786,21 @@ module w25q128jw_controller
               // Check BUSY bit: 0 = ready, 1 = busy
               if (spi_host_reg_rsp_i.rdata[0] == 1'b0) begin
                 // ===== FLASH READY: Proceed to next operation =====
+                fwait_state_d = FWAIT_IDLE;
                 case (fwait_cnt_q)
                   // After READ: Flash ready -> go to ERASE
                   2'h0: begin
                     fwait_cnt_d   = 2'h1;
-                    fwait_state_d = FWAIT_IDLE;
                     top_state_d   = TOP_ERASE;
-                    erase_state_d = ERASE_IDLE;
                   end
                   // After ERASE: Flash ready -> go to MODIFY
                   2'h1: begin
                     fwait_cnt_d = 2'h2;
-                    fwait_state_d = FWAIT_IDLE;
                     top_state_d = TOP_MODIFY;
-                    modify_state_d = MODIFY_IDLE;
                   end
                   // After WRITE: Flash ready -> either complete or continue with next sector
                   2'h2: begin
                     fwait_cnt_d   = 2'h0;
-                    fwait_state_d = FWAIT_IDLE;
                     if (reg2hw.length.q == 0) begin
                       top_state_d = TOP_IDLE;
                       md_offset_d = 32'h0;  // Reset MODIFY offset for next operation
@@ -815,14 +811,11 @@ module w25q128jw_controller
                       hw2reg.intr_status.d = reg2hw.intr_enable.q;
                     end else begin
                       top_state_d  = TOP_READ;
-                      read_state_d = READ_IDLE;
                     end
                   end
                   // If WRITE has multiple pages to modify, continue with next page
                   2'h3: begin
-                    fwait_state_d = FWAIT_IDLE;
                     top_state_d   = TOP_WRITE;
-                    write_state_d = WRITE_WE_CHECK_TX_FIFO;
                   end
                   default: begin
                   end
