@@ -69,24 +69,24 @@
 // default values
 #define DEFAULT_AXI_NUM 5
 #define DEFAULT_AXI_SIZE 2
-#define DEFAULT_AXI_ADDR 0x00001000
+#define DEFAULT_AXI_ADDR 0x00001006
 
 // Global variables
 
 const uint64_t DEFAULT_AXI_WDATA_64[DEFAULT_AXI_NUM] = {
-    0x0000000000003210,
-    0x0000000076540000,
-    0x0000BA9800000000,
-    0xFEDC000000000000,
-    0x0000000000001111
+    0x3210000000000000,
+    0x0000000000007654,
+    0x00000000BA980000,
+    0x0000FEDC00000000,
+    0x1111000000000000
 };
 
 const uint64_t DEFAULT_AXI_WDATA_32[DEFAULT_AXI_NUM] = {
-    0x0000000000003210,
-    0x0000000076540000,
-    0x000000000000BA98,
-    0x00000000CDEF0000,
-    0x0000000000001111
+    0x0000000032100000,
+    0x0000000000007654,
+    0x00000000BA980000,
+    0x000000000000CDEF,
+    0x0000000011110000
 };
 
 // ================================ FUNCTION PROTOTYPES ================================
@@ -584,6 +584,7 @@ int main(int argc, char *argv[]){
 
                 case FINISH:
                     end_of_sim = 1;
+                    std::cout<<"Simulation terminated correctly"<<std::endl;
                     break;
 
                 default : end_of_sim = 1;

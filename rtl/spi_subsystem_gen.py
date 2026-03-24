@@ -15,15 +15,10 @@ from mako.template import Template
 class PeripheralDomain:
 
     def __init__(self):
-        self.interfaces = ["obi", "axi"]
-        #self.interfaces = ["no_obi", "axi"]
-        #self.interfaces = ["no_obi", "no_axi"]
-        #self.interfaces = ["obi", "no_axi"]
-        #self.peripherals = ["w25q128jw_controller"]
-        self.peripherals = ["no_w25q128jw_controller"]
 
-    def contains_interface(self, name):
-        return name in self.interfaces
+        #self.peripherals = ["w25q128jw_controller","obi_spi","axi_spi"]
+        #self.peripherals = ["obi_spi","axi_spi"]
+        self.peripherals = ["axi_spi"]
 
     def contains_peripheral(self, name):
         return name in self.peripherals

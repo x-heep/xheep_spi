@@ -12,9 +12,10 @@
  
   Based on XHEEP's w25q128jw_controller.sv
 
+  TODO : add more blank space in the FSM
   TODO : add some comments from original w25q128jw_controller ? Improve readability
   TODO : between first and second sector write of the single beat might not be required to FWAIT , maybe even between beats
-  TODO : correct code to avioid WIDTH warnings
+  TODO : correct code to avioid WIDTH warnings, allowing waiver file reduction.
 
   TODO : at last, remove verilator scope signals in tc_sram (and also spiflash)
 
@@ -319,7 +320,7 @@ module axi_to_flash_controller
   logic                              first_sector_write_q   , first_sector_write_d;
   logic                              second_sector_write_q  , second_sector_write_d;
   logic [RegDataWidth-1:0]           spi_host_command_q     , spi_host_command_d;
-  logic                              beat_half_count_q      , beat_half_count_d;
+  logic                              beat_half_index_q      , beat_half_index_d;
   logic [SE_WSIZE_DW-1:0]            word_count_q           , word_count_d;
   logic [DataWidth-1:0]              rd_queue_buffer_q      , rd_queue_buffer_d;
   logic [DataWidth-1:0]              wr_queue_buffer_data_q , wr_queue_buffer_data_d;
@@ -363,7 +364,7 @@ module axi_to_flash_controller
       first_sector_write_q   <= '0;
       second_sector_write_q  <= '0;
       spi_host_command_q     <= '0;
-      beat_half_count_q      <= '0;
+      beat_half_index_q      <= '0;
       word_count_q           <= '0;
       rd_queue_buffer_q      <= '0;
       wr_queue_buffer_data_q <= '0;
@@ -394,7 +395,7 @@ module axi_to_flash_controller
       first_sector_write_q   <= first_sector_write_d;
       second_sector_write_q  <= second_sector_write_d;
       spi_host_command_q     <= spi_host_command_d;
-      beat_half_count_q      <= beat_half_count_d;
+      beat_half_index_q      <= beat_half_index_d;
       word_count_q           <= word_count_d;
       rd_queue_buffer_q      <= rd_queue_buffer_d;
       wr_queue_buffer_data_q <= wr_queue_buffer_data_d;
@@ -438,7 +439,7 @@ module axi_to_flash_controller
     first_sector_write_d   = first_sector_write_q;
     second_sector_write_d  = second_sector_write_q;
     spi_host_command_d     = spi_host_command_q;
-    beat_half_count_d      = beat_half_count_q;
+    beat_half_index_d      = beat_half_index_q;
     word_count_d           = word_count_q;
     rd_queue_buffer_d      = rd_queue_buffer_q;
     wr_queue_buffer_data_d = wr_queue_buffer_data_q;
@@ -459,6 +460,7 @@ module axi_to_flash_controller
     axi2fls_wr_valid = '0;
     axi2fls_wr_data = '0;
     axi2fls_wr_be = '0;
+    spihost_wr_ready = '0;
     spihost_rd_valid = '0;
     spihost_rd_data = '0;
     clear_queues = '0;
@@ -581,7 +583,10 @@ module axi_to_flash_controller
             read_state_d = READ_INIT;
           end
           READ_INIT: begin
-            // Flash address is byte-precise and 24 bits
+            logic skip_sector_read;
+            logic [FlashAddrW-1:0] previous_flash_addr = flash_addr_q;
+            // Note : Flash address is byte-precise and 24 bits wide
+            // flash_addr evaluation
             if (rnw_q) begin  // READ case
               flash_addr_d = beat_addr_q[FlashAddrW-1:0]; // READ : flash address = beat address
             end
@@ -603,8 +608,17 @@ module axi_to_flash_controller
                 flash_addr_d = sector_addr_of_last_byte[FlashAddrW-1:0]; // Next sector
               end
             end
+            // skip_sector_read evaluation
+            // We want to skip the sector storage into the sector buffer in case nothing would change from the previous beat
+            // Skip the sector read if we are writing and the sector base address sent to the flash would be the same
+            skip_sector_read = ((flash_addr_d == previous_flash_addr) && ~rnw_q) ? 1'b1 : 1'b0;
             // Next state evaluation
-            read_state_d = READ_SET_RXWM_R;
+            if (skip_sector_read) begin
+              read_state_d = READ_IDLE;
+              top_state_d = TOP_FWAIT;
+            end else begin
+              read_state_d = READ_SET_RXWM_R;
+            end
           end
           READ_SET_RXWM_R: begin
             // Set RX watermark to 1 word so we get notified when status byte arrives
@@ -657,7 +671,7 @@ module axi_to_flash_controller
           end
           READ_SPI_WAIT_READY_1: begin
             // Wait for spi_host to be ready (command queue not busy)
-            if (external_spi_host_hw2reg_status_i.ready.d) begin //TODO: update similar states checking this
+            if (external_spi_host_hw2reg_status_i.ready.d) begin //TODO : update similar states checking this
               read_state_d = READ_SPI_SEND_CMD_1;
             end
           end
@@ -726,11 +740,11 @@ module axi_to_flash_controller
                 if (~datawidth_is_64_n32) begin   // 32bit
                   read_state_d = READ_R_BEAT_PUSH_DW32;   
                 end
-                if ( datawidth_is_64_n32) begin   // 64bit
-                  if (beat_half_count_q == 0) begin   // First half of the beat
+                if (datawidth_is_64_n32) begin   // 64bit
+                  if (beat_half_index_q == 0) begin   // First half of the beat
                     read_state_d = READ_R_BEAT_PUSH_DW64_1;
                   end 
-                  if (beat_half_count_q == 1) begin   // Second half of the beat
+                  if (beat_half_index_q == 1) begin   // Second half of the beat
                     read_state_d = READ_R_BEAT_PUSH_DW64_2;
                   end
                 end 
@@ -750,7 +764,7 @@ module axi_to_flash_controller
               sect_buffer_req = 1'b1;
               sect_buffer_we = 1'b1;
               sect_buffer_addr = '0 + word_count_q;
-              sect_buffer_wdata = bitfield_byteswap32(spi_host_reg_rsp_i.rdata);
+              sect_buffer_wdata = spi_host_reg_rsp_i.rdata;
               sect_buffer_be = 4'b1111;
               word_count_d = word_count_q + 1;
             end
@@ -773,7 +787,7 @@ module axi_to_flash_controller
             spi_host_reg_req_o.valid = 1'b1;
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               // When beat is popped, save it first in the rd_queue_buffer
-              rd_queue_buffer_d = bitfield_byteswap32(spi_host_reg_rsp_i.rdata);
+              rd_queue_buffer_d = spi_host_reg_rsp_i.rdata;
             end
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
@@ -794,8 +808,8 @@ module axi_to_flash_controller
             spi_host_reg_req_o.valid = 1'b1;
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               // When beat is popped, save it first in the rd_queue_buffer
-              rd_queue_buffer_d[31:0] = bitfield_byteswap32(spi_host_reg_rsp_i.rdata);
-              beat_half_count_d = 1'b1;
+              rd_queue_buffer_d[31:0] = spi_host_reg_rsp_i.rdata;
+              beat_half_index_d = 1'b1;
             end
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
@@ -813,10 +827,11 @@ module axi_to_flash_controller
               spi_host_reg_req_o.valid = 1'b1;
               if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
                 // When beat is popped, save it first in the rd_queue_buffer
-                rd_queue_buffer_d[DataWidth-1:DataWidth/2] = bitfield_byteswap32(spi_host_reg_rsp_i.rdata);
-                beat_half_count_d = 1'b0;
+                rd_queue_buffer_d[DataWidth-1:DataWidth/2] = spi_host_reg_rsp_i.rdata;
+                beat_half_index_d = 1'b0;
               end
             end
+            beat_half_index_d = 1'b0;
             // Next state evaluation
             if (beat_size_q > 4) begin
               if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
@@ -838,7 +853,7 @@ module axi_to_flash_controller
                 // addr_0 = ax_addr
                 // addr_0_alligned = INT(addr_0 / size) * size
                 // addr_N = addr_0_alligned + size*N
-                beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q)*beat_size_q;
+                beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
                 flash_addr_d = beat_addr_d; // It is enstablished that we are reading
               end
             end
@@ -885,7 +900,7 @@ module axi_to_flash_controller
             end
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
-              read_state_d = FWAIT_SET_RXWM_W;
+              fwait_state_d = FWAIT_SET_RXWM_W;
             end
           end
           FWAIT_SET_RXWM_W: begin
@@ -905,7 +920,7 @@ module axi_to_flash_controller
           FWAIT_SPI_CHECK_TX_FIFO: begin
             // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
             if (external_spi_host_hw2reg_status_i.txqd.d < SPI_FLASH_TX_FIFO_DEPTH[7:0]) begin
-              read_state_d = FWAIT_SPI_FILL_TX_FIFO;
+              fwait_state_d = FWAIT_SPI_FILL_TX_FIFO;
             end
           end
           FWAIT_SPI_FILL_TX_FIFO: begin
@@ -1032,7 +1047,7 @@ module axi_to_flash_controller
                           addr_0_alligned = INT(addr_0 / size) * size
                           addr_N = addr_0_alligned + size*N
                           */
-                          beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q)*beat_size_q;
+                          beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
                           
                           fwait_state_d = FWAIT_IDLE;
                           top_state_d = TOP_READ;
@@ -1237,16 +1252,16 @@ module axi_to_flash_controller
 
           cases for MODIFY_SECTOR_UPDATE_DW64:
 
-          (I) beat fits in one sector
+          (I) beat fits in one sector , sector doesn't change
           MODIFY_SECTOR_UPDATE_DW64_1    MODIFY_SECTOR_UPDATE_DW64_2    MODIFY_SECTOR_UPDATE_DW64_3
           sector_relative_addr = x       sector_relative_addr = x+1     sector_relative_addr = x+2
           
-          (II) beat needs two sectors
+          (II) beat needs two sectors , sector changes @ third word of sector buffer
           MODIFY_SECTOR_UPDATE_DW64_1    MODIFY_SECTOR_UPDATE_DW64_2    MODIFY_SECTOR_UPDATE_DW64_3    MODIFY_SECTOR_UPDATE_DW64_1    MODIFY_SECTOR_UPDATE_DW64_2    MODIFY_SECTOR_UPDATE_DW64_3
           first_sector_write == 1        first_sector_write == 1        first_sector_write == 1        second_sector_write == 1       second_sector_write == 1       second_sector_write == 1
           sector_relative_addr = x       sector_relative_addr = x+1     skipped                        skipped                        skipped                        sector_relative_addr = 0
       
-          (III) beat needs two sectors
+          (III) beat needs two sectors , sector changes @ second word of sector buffer
           MODIFY_SECTOR_UPDATE_DW64_1    MODIFY_SECTOR_UPDATE_DW64_2    MODIFY_SECTOR_UPDATE_DW64_3    MODIFY_SECTOR_UPDATE_DW64_1    MODIFY_SECTOR_UPDATE_DW64_2    MODIFY_SECTOR_UPDATE_DW64_3
           first_sector_write == 1        first_sector_write == 1        first_sector_write == 1        second_sector_write == 1       second_sector_write == 1       second_sector_write == 1
           sector_relative_addr = x       skipped                        skipped                        skipped                        sector_relative_addr = 0       sector_relative_addr = 1
@@ -1584,12 +1599,13 @@ module axi_to_flash_controller
             // Count the latency to sample the rdata in the right cycle
             wait_latency_count_d = wait_latency_count_q + 1;
             // Next state evaluation
-            if (wait_latency_count_d == SectorBufferLatency) begin
+            if (wait_latency_count_q == SectorBufferLatency) begin
               write_state_d = WRITE_PP_PAGE_WRITE_2;
             end
           end
           WRITE_PP_PAGE_WRITE_2: begin
-            // store read content in the sector buffer's buffer (single register)
+            wait_latency_count_d = 0; // Reset latency counter
+            // Store read content in the sector buffer's buffer (single register)
             sec_buf_buffer_d = sect_buffer_rdata;
             // Next state evaluation
             write_state_d = WRITE_PP_PAGE_WRITE_3;
@@ -1605,7 +1621,7 @@ module axi_to_flash_controller
             spi_host_reg_req_offset = SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
-            spi_host_reg_req_o.wdata = bitfield_byteswap32(sec_buf_buffer_d);
+            spi_host_reg_req_o.wdata = sec_buf_buffer_d;
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               word_count_d = word_count_q + 1;
               if (word_count_d == PAGE_WSIZE) begin
@@ -1688,14 +1704,15 @@ module axi_to_flash_controller
                 lower_byte_lane = beat_addr_at_beat_count - (first_beat_addr_q / DataBytes)*DataBytes;
                 upper_byte_lane = lower_byte_lane + (beat_size_q - 1); 
               end
+              r_valid = 1'b1;
               r_data = '0;
               n = 0;
               for (int i = lower_byte_lane ; i <= upper_byte_lane ; i++) begin
-                // r_data[n*8+7:n*8] = axi2fls_rd_data[i*8+7:i*8];
-                r_data[n*8 +: 8] = axi2fls_rd_data[i*8 +: 8];
+                // r_data[i*8+7:i*8] = axi2fls_rd_data[n*8+7:n*8];
+                r_data[i*8 +: 8] = axi2fls_rd_data[n*8 +: 8];
                 n++;
               end
-              if (beat_count_d == (beat_number_q - 1))  begin 
+              if (beat_count_d == beat_number_q)  begin 
                 r_last = 1'b1;
               end
               if (r_ready) begin
@@ -1704,7 +1721,7 @@ module axi_to_flash_controller
               end
             end
             // Next state evaluation
-            if ( axi2fls_rd_valid && r_ready && (beat_count_d == (beat_number_q - 1)) ) begin
+            if ( axi2fls_rd_valid && r_ready && (beat_count_d == beat_number_q) ) begin
               top_state_d = TOP_IDLE;
               axiresp_state_d = AXIRESP_IDLE;
             end

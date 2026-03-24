@@ -26,7 +26,11 @@
 // updates output signals 1ns after the SPI clock edge.
 //
 // Supported commands:
-//    AB, B9, FF, 03, BB, EB, ED, 06, 02, 32
+//    AB, B9, FF, 03, BB, EB, ED, 06, 02, 32, 20, FF
+// 
+// Partially supported commands:
+//    05      (only Write-Enable Latch and BUSY bit support)
+//    31, 35  (only Quad-Enable bit support)
 //
 // Well written SPI flash data sheets:
 //    Cypress S25FL064L http://www.cypress.com/file/316661/download
@@ -55,12 +59,16 @@ module spiflash (
     inout wire io3
 );
   localparam verbose = 0;
-  localparam integer latency = 8;
+  localparam integer latency = 4;
+  localparam integer sector_size = 4096;  // 4 KB
+  localparam integer busy_cycles = 100;
 
   logic [7:0] buffer;
   integer bitcount = 0;
   integer bytecount = 0;
   integer dummycount = 0;
+  integer erase_addr = 0;
+  integer erase_offset = 0;
 
   logic [7:0] spi_cmd;
   logic [7:0] xip_cmd = 0;
@@ -70,12 +78,15 @@ module spiflash (
   logic [7:0] spi_out;
   logic spi_io_vld;
 
-  //logic powered_up = 0;
-  logic powered_up = 1;                           // FORCED POWER UP FOR SIM PURPOSES BUT NOT FINAL
+  // logic powered_up = 0;
   logic write_enable = 0;
   logic write_enable_reset = 0;
+  logic quad_enable = 0;
 
-  localparam [3:0] mode_spi = 0;
+  logic command_pending = 0;
+  integer current_busy_cycles = 0;
+
+  localparam [3:0] mode_spi = 1;
   localparam [3:0] mode_dspi_rd = 2;
   localparam [3:0] mode_dspi_wr = 3;
   localparam [3:0] mode_qspi_rd = 4;
@@ -114,7 +125,7 @@ module spiflash (
   // 16 MB (128Mb) Flash
   logic [7:0] memory[16*1024*1024];
 
-  // _-*-_-*-_-*-_-*-_-*-_-*-_ USER INITIALIZATION _-*-_-*-_-*-_-*-_-*-_-*-_
+  // _-*-_-*-_-*-_-*-_-*-_-*-_ USER CODE _-*-_-*-_-*-_-*-_-*-_-*-_
   
   logic [7:0] storage[16];
 
@@ -124,12 +135,18 @@ module spiflash (
     for (int i = 0; i < 4096; i++) begin
       memory[24'h001000 + i] = (8'hff - i[7:0]);
     end
-    for (int i = 0; i < 16; i++) begin
-      storage[i] = memory[24'h001000 + i];
-    end
   end
 
-  // _-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_
+always_comb begin
+  for (int i = 0; i < 16; i++) begin
+    storage[i] = memory[24'h001000 + i];
+  end
+end
+
+  logic powered_up = 1; // temporarily fixed to 1, later implement rutine to manualy set this
+  // otherwise spi_address fixed to 0
+
+  // _-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_
 
   task spi_action;
     begin
@@ -138,13 +155,23 @@ module spiflash (
       if (bytecount == 1) begin
         spi_cmd = buffer;
 
-        if (spi_cmd == 8'hab) powered_up = 1;
+        // Only commands that can be executed while busy (Section 7.1.1):
+        // - read status register ('h05, 'h35, 'h15)
+        // - erase / program suspend ('h75)
+        if (current_busy_cycles > 0 
+            && spi_cmd != 'h05 && spi_cmd != 'h35 && spi_cmd != 'h15
+            && spi_cmd != 'h75
+        ) begin
+          spi_cmd = 8'h00;
+        end else begin
+          if (spi_cmd == 8'hab) powered_up = 1;
 
-        if (spi_cmd == 8'hb9) powered_up = 0;
+          if (spi_cmd == 8'hb9) powered_up = 0;
 
-        if (spi_cmd == 8'hff) xip_cmd = 0;
+          if (spi_cmd == 8'hff) xip_cmd = 0;
 
-        if (spi_cmd == 8'h06) write_enable = 1;
+          if (spi_cmd == 8'h06) write_enable = 1;
+        end
       end
 
       if (powered_up && spi_cmd == 'h03) begin
@@ -160,8 +187,39 @@ module spiflash (
         end
       end
 
+      if (powered_up && spi_cmd == 'h05) begin
+        if (bytecount == 1) begin
+          // Simplified model:
+          // - protect bits always 0
+          buffer = {6'b000000, write_enable, (current_busy_cycles != 0)};
+        end
+      end
+
+      if (powered_up && spi_cmd == 'h35) begin
+        if (bytecount == 1) begin
+          // Simplified model:
+          // - All bits to 0 except QE bit
+          buffer = {6'b000000, quad_enable, 1'b0};
+        end
+      end
+
+      if (powered_up && spi_cmd == 'h31) begin
+        if (bytecount == 2) begin
+          // Simplified model:
+          // - All bits to 0 except QE bit
+          if (buffer[1] == 1'b1) quad_enable = buffer[1];
+        end
+      end
+
+      if (powered_up && spi_cmd == 'hff) begin
+        quad_enable = 1'b0;
+      end
+
       if (powered_up && write_enable && spi_cmd == 'h02) begin
-        if (bytecount == 1) write_enable_reset = 1;
+        if (bytecount == 1) begin
+          write_enable_reset = 1;
+          command_pending = 1;
+        end
 
         if (bytecount == 2) spi_addr[23:16] = buffer;
 
@@ -172,6 +230,26 @@ module spiflash (
         if (bytecount >= 5 && bytecount <= 260) begin
           memory[spi_addr] = buffer;
           spi_addr = spi_addr + 1;
+        end
+      end
+
+      if (powered_up && write_enable && spi_cmd == 'h20) begin
+        if (bytecount == 1) begin
+          write_enable_reset = 1;
+          command_pending = 1;
+        end
+
+        if (bytecount == 2) spi_addr[23:16] = buffer;
+
+        if (bytecount == 3) spi_addr[15:8] = buffer;
+
+        if (bytecount == 4) begin
+          spi_addr[7:0] = buffer;
+
+          erase_addr = spi_addr & 24'hfff000;
+          for (erase_offset = 0; erase_offset < sector_size; erase_offset = erase_offset + 1) begin
+            memory[erase_addr+erase_offset] = 8'hff;
+          end
         end
       end
 
@@ -196,7 +274,7 @@ module spiflash (
         end
       end
 
-      if (powered_up && spi_cmd == 'heb) begin
+      if (powered_up && quad_enable && spi_cmd == 'heb) begin
         if (bytecount == 1) mode = mode_qspi_rd;
 
         if (bytecount == 2) spi_addr[23:16] = buffer;
@@ -217,8 +295,11 @@ module spiflash (
         end
       end
 
-      if (powered_up && write_enable && spi_cmd == 'h32) begin
-        if (bytecount == 1) write_enable_reset = 1;
+      if (powered_up && write_enable && quad_enable && spi_cmd == 'h32) begin
+        if (bytecount == 1) begin
+          write_enable_reset = 1;
+          command_pending = 1;
+        end
 
         if (bytecount == 2) spi_addr[23:16] = buffer;
 
@@ -235,7 +316,7 @@ module spiflash (
         end
       end
 
-      if (powered_up && spi_cmd == 'hed) begin
+      if (powered_up && quad_enable && spi_cmd == 'hed) begin
         if (bytecount == 1) next_mode = mode_qspi_ddr_rd;
 
         if (bytecount == 2) spi_addr[23:16] = buffer;
@@ -310,6 +391,10 @@ module spiflash (
       if (write_enable_reset) begin
         write_enable = 0;
         write_enable_reset = 0;
+      end
+      if (command_pending) begin
+        current_busy_cycles = busy_cycles;
+        command_pending = 0;
       end
       buffer = 0;
       bitcount = 0;
@@ -412,6 +497,8 @@ module spiflash (
   end
 
   always @(posedge clk) begin
+    if (current_busy_cycles > 0) current_busy_cycles = current_busy_cycles - 1;
+
     if (!csb) begin
       if (dummycount > 0) begin
         dummycount = dummycount - 1;

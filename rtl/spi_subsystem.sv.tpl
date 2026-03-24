@@ -113,7 +113,7 @@ module spi_subsystem
   assign reg_rsp_unused = '0;
   assign obi_rsp_unused = '0;
 
-% if base_peripheral_domain.contains_interface('obi'):
+% if base_peripheral_domain.contains_peripheral('obi_spi'):
 
   // YosysHW SPI Interface
   logic                               yo_spi_sck;
@@ -208,7 +208,7 @@ end
 
 %endif
 
-% if base_peripheral_domain.contains_interface('axi'):
+% if base_peripheral_domain.contains_peripheral('axi_spi'):
 
   // AXI to flash controller
   reg_req_t reg_req_from_a2f_ctr;
@@ -296,7 +296,7 @@ end
 
 % if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
 
-% if base_peripheral_domain.contains_interface('axi'):
+% if base_peripheral_domain.contains_peripheral('axi_spi'):
 
   // // Multiplexer - select the active flash controller
     // among:
@@ -328,7 +328,7 @@ end
 
 % else: ## no w25_ctr , axi
 
-% if base_peripheral_domain.contains_interface('axi'):
+% if base_peripheral_domain.contains_peripheral('axi_spi'):
  
   assign muxed_controllers_reg_req = reg_req_from_a2f_ctr;
   assign reg_rsp_to_a2f_ctr = muxed_controllers_reg_rsp;
@@ -423,7 +423,7 @@ end
       .devmode_i(1'b1)
   );
 
-% if base_peripheral_domain.contains_interface('axi'):
+% if base_peripheral_domain.contains_peripheral('axi_spi'):
 `ifndef SYNTHESIS
 
   always_ff @(posedge clk_i) begin : yosys_spi_write
