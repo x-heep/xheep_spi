@@ -658,12 +658,7 @@ module w25q128jw_controller
       // The BUSY bit (bit 0) is set during erase/program operations
       //
       // This FSM is called multiple times during a write operation:
-      //   fwait_cnt = 0: After READ  -> wait for flash ready, then go to ERASE
-      //   fwait_cnt = 1: After ERASE -> wait for flash ready, then go to MODIFY
-      //   fwait_cnt = 2: After WRITE -> wait for flash ready, then complete
-      //   fwait_cnt = 3: After WRITE with more pages to write -> wait for flash ready, then continue writing next page
-      //
-      // Note: fwait_cnt is reset to 0 if total length has not been written yet and more sectors need to be processed
+      // Note: fwait_return is reset to IDLE if total length has not been written yet and more sectors need to be processed
       // Hence the operation only finishes when all the data has been written back into flash
       // ============================================================================
 
