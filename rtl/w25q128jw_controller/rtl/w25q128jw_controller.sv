@@ -160,6 +160,16 @@ module w25q128jw_controller
     FWAIT_READ_FLASH_STATUS  // Read status byte and check BUSY bit (bit 0). If busy then repeat process, else redirect to correct FSM/complete operation
   } fwait_state_e;
 
+  // -------- FLASH WAIT RETURN STATES --------
+  // Reset wait status and redirect to correct FSM after flash is ready
+  // depending on which operation we were waiting for
+  typedef enum logic [1:0] {
+    FWAIT_RETURN_IDLE,
+    FWAIT_RETURN_ERASE,
+    FWAIT_RETURN_MODIFY,
+    FWAIT_RETURN_WRITE
+  } fwait_return_e;
+
   // -------- ERASE FSM STATES --------
   // Erases a 4KB sector before writing new data
   // Sequence: Write Enable (WE) -> Sector Erase (SE)
@@ -239,13 +249,13 @@ module w25q128jw_controller
   read_state_e read_state_q, read_state_d;
   erase_state_e erase_state_q, erase_state_d;
   fwait_state_e fwait_state_q, fwait_state_d;
+  fwait_return_e fwait_return_q, fwait_return_d;
   modify_state_e modify_state_q, modify_state_d;
   write_state_e write_state_q, write_state_d;
   dma_init_state_e dma_init_state_q, dma_init_state_d;
   dma_init_return_e dma_init_return_q, dma_init_return_d;
 
   // Counter and Offset signals
-  logic [1:0] fwait_cnt_q, fwait_cnt_d;
   logic [3:0] page_cnt_q, page_cnt_d;
   logic [31:0] sector_offset, sector_iter_offset_d, sector_iter_offset_q, md_offset_d, md_offset_q;
   logic [31:0] spi_control_q, spi_control_d;
@@ -267,7 +277,7 @@ module w25q128jw_controller
       write_state_q <= WRITE_IDLE;
 
       // -------- Reset: Clear counters and offsets --------
-      fwait_cnt_q   <= 2'b0;
+      fwait_return_q   <= FWAIT_RETURN_IDLE;
       page_cnt_q    <= 4'b0;
       sector_iter_offset_q <= 32'h0;
       md_offset_q <= 32'h0;
@@ -281,7 +291,7 @@ module w25q128jw_controller
       fwait_state_q <= fwait_state_d;
       modify_state_q <= modify_state_d;
       write_state_q <= write_state_d;
-      fwait_cnt_q   <= fwait_cnt_d;
+      fwait_return_q <= fwait_return_d;
       page_cnt_q    <= page_cnt_d;
       sector_iter_offset_q <= sector_iter_offset_d;
       md_offset_q <= md_offset_d;
@@ -303,7 +313,7 @@ module w25q128jw_controller
     fwait_state_d = fwait_state_q;
     modify_state_d = modify_state_q;
     write_state_d = write_state_q;
-    fwait_cnt_d = fwait_cnt_q;
+    fwait_return_d = fwait_return_q;
     page_cnt_d = page_cnt_q;
     sector_iter_offset_d = sector_iter_offset_q;
     md_offset_d = md_offset_q;
@@ -787,20 +797,20 @@ module w25q128jw_controller
               if (spi_host_reg_rsp_i.rdata[0] == 1'b0) begin
                 // ===== FLASH READY: Proceed to next operation =====
                 fwait_state_d = FWAIT_IDLE;
-                case (fwait_cnt_q)
+                case (fwait_return_q)
                   // After READ: Flash ready -> go to ERASE
-                  2'h0: begin
-                    fwait_cnt_d   = 2'h1;
-                    top_state_d   = TOP_ERASE;
+                  FWAIT_RETURN_IDLE: begin
+                    fwait_return_d = FWAIT_RETURN_ERASE;
+                    top_state_d = TOP_ERASE;
                   end
                   // After ERASE: Flash ready -> go to MODIFY
-                  2'h1: begin
-                    fwait_cnt_d = 2'h2;
+                  FWAIT_RETURN_ERASE: begin
+                    fwait_return_d = FWAIT_RETURN_MODIFY;
                     top_state_d = TOP_MODIFY;
                   end
                   // After WRITE: Flash ready -> either complete or continue with next sector
-                  2'h2: begin
-                    fwait_cnt_d   = 2'h0;
+                  FWAIT_RETURN_MODIFY: begin
+                    fwait_return_d = FWAIT_RETURN_IDLE;
                     if (reg2hw.length.q == 0) begin
                       top_state_d = TOP_IDLE;
                       md_offset_d = 32'h0;  // Reset MODIFY offset for next operation
@@ -810,12 +820,12 @@ module w25q128jw_controller
                       hw2reg.intr_status.de   = 1'b1;     // Set interrupt status (rise IRQ through assignements (see end of module))
                       hw2reg.intr_status.d = reg2hw.intr_enable.q;
                     end else begin
-                      top_state_d  = TOP_READ;
+                      top_state_d = TOP_READ;
                     end
                   end
                   // If WRITE has multiple pages to modify, continue with next page
-                  2'h3: begin
-                    top_state_d   = TOP_WRITE;
+                  FWAIT_RETURN_WRITE: begin
+                    top_state_d = TOP_WRITE;
                   end
                   default: begin
                   end
@@ -1274,12 +1284,12 @@ module w25q128jw_controller
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               // ===== CHECK IF MORE PAGES/SECTORS TO PROCESS =====
-              top_state_d = TOP_FWAIT;
+              top_state_d   = TOP_FWAIT;
               write_state_d = WRITE_IDLE;
               if (page_cnt_q == 4'hf) begin
                 // All 16 pages in current sector programmed
                 // Always wait until flash is not busy before finalizing or moving to next sector.
-                fwait_cnt_d = 2'h2;
+                fwait_return_d = FWAIT_RETURN_MODIFY;
                 page_cnt_d = 4'b0;  // Reset page counter for next sector / next operation
                 if (reg2hw.length.q != 0) begin
                   sector_iter_offset_d = sector_iter_offset_q + {19'b0, SE_BSIZE}; // Next sector (+4KB)
@@ -1288,7 +1298,7 @@ module w25q128jw_controller
                 // ===== MORE PAGES IN CURRENT SECTOR: Program next page =====
                 // Restart WE + PP sequence after waiting for BUSY bit
                 page_cnt_d = page_cnt_q + 1'h1;
-                fwait_cnt_d = 2'h3;
+                fwait_return_d = FWAIT_RETURN_WRITE;
               end
             end
           end
