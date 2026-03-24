@@ -820,7 +820,6 @@ module w25q128jw_controller
                   end
                   // If WRITE has multiple pages to modify, continue with next page
                   2'h3: begin
-                    fwait_cnt_d   = 2'h3;
                     fwait_state_d = FWAIT_IDLE;
                     top_state_d   = TOP_WRITE;
                     write_state_d = WRITE_WE_CHECK_TX_FIFO;
@@ -1282,12 +1281,11 @@ module w25q128jw_controller
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               // ===== CHECK IF MORE PAGES/SECTORS TO PROCESS =====
+              top_state_d = TOP_FWAIT;
+              write_state_d = WRITE_IDLE;
               if (page_cnt_q == 4'hf) begin
                 // All 16 pages in current sector programmed
                 // Always wait until flash is not busy before finalizing or moving to next sector.
-                write_state_d = WRITE_IDLE;
-                top_state_d = TOP_FWAIT;
-                fwait_state_d = FWAIT_IDLE;
                 fwait_cnt_d = 2'h2;
                 page_cnt_d = 4'b0;  // Reset page counter for next sector / next operation
                 if (reg2hw.length.q != 0) begin
@@ -1297,8 +1295,6 @@ module w25q128jw_controller
                 // ===== MORE PAGES IN CURRENT SECTOR: Program next page =====
                 // Restart WE + PP sequence after waiting for BUSY bit
                 page_cnt_d = page_cnt_q + 1'h1;
-                top_state_d = TOP_FWAIT;
-                fwait_state_d = FWAIT_IDLE;
                 fwait_cnt_d = 2'h3;
               end
             end
