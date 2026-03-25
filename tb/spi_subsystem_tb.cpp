@@ -624,6 +624,49 @@ int main(int argc, char *argv[]){
         }
     }
 
+// --- Data Comparison Section ---
+    std::cout << std::endl << BLUE << BOLD << "========================================" << RESET << std::endl;
+    std::cout << BOLD << "          DATA INTEGRITY CHECK" << RESET << std::endl;
+    std::cout << BLUE << BOLD << "========================================" << RESET << std::endl;
+
+    bool test_failed = false;
+    
+    // First, verify if the number of read beats matches the number of written beats
+    if (axi_rdata_vector.size() != axi_wdata_vector.size()) {
+        std::cout << RED << BOLD << "ERROR: Mismatch in number of beats!" << RESET << std::endl;
+        std::cout << "Expected: " << axi_wdata_vector.size() << " | Received: " << axi_rdata_vector.size() << std::endl;
+        test_failed = true;
+    } else {
+        // Iterate through the vectors and compare each beat
+        for (size_t i = 0; i < axi_wdata_vector.size(); ++i) {
+            uint64_t expected = axi_wdata_vector[i];
+            uint64_t received = axi_rdata_vector[i];
+
+            // If the bus is 32-bit, mask the upper 32 bits to ensure a fair comparison
+            if (!AXI_DATA_SIZE_IS_64_n32) {
+                expected &= 0x00000000FFFFFFFFULL;
+            }
+
+            if (expected != received) {
+                // Print detailed error message on mismatch
+                printf(RED "Mismatch at beat [%zu]: Expected 0x%016llX, Got 0x%016llX" RESET "\n", i, expected, received);
+                test_failed = true;
+            } else {
+                // Confirm successful match for the current beat
+                printf(GREEN "Beat [%zu]: Pass (0x%016llX)" RESET "\n", i, received);
+            }
+        }
+    }
+
+    // Final simulation status report
+    if (test_failed) {
+        std::cout << RED << BOLD << "\nTEST STATUS: FAILED" << RESET << std::endl;
+    } else {
+        std::cout << GREEN << BOLD << "\nTEST STATUS: SUCCESS" << RESET << std::endl;
+    }
+    std::cout << BLUE << BOLD << "========================================" << RESET << std::endl << std::endl;
+    // --- End of Data Comparison Section ---
+
     // Simulation complete
     dut->final();
 

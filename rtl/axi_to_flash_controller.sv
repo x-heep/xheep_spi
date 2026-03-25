@@ -45,6 +45,11 @@ module axi_to_flash_controller
   localparam int PageCountDW = sizeInBits(SE_PSIZE+1),
   localparam int SectorBufferLatency = 1,
   localparam int SecBuffLatencyDW = sizeInBits(SectorBufferLatency+1),
+  localparam int ClockFrequencyMAX_kHz = 1e6,
+  localparam int w25q128jw_tPUW_ms = 5, // 5ms , from datasheet
+  localparam int PowerOnWaitCycles = ClockFrequencyMAX_kHz * w25q128jw_tPUW_ms,
+  localparam int PoweronWaitCycles_SIM = 10,
+  localparam int PowerOnWaitCyclesDW = sizeInBits(PowerOnWaitCycles+1),
   parameter logic ByteOrder = 1, // 1 == Little Endian , 0 == Big Endian  ; @ 0 , beat_queues swap bytes.
   parameter int AddrWidth = 64,
   parameter int FlashAddrW = 24,
@@ -149,6 +154,7 @@ module axi_to_flash_controller
   localparam int SPI_FLASH_TX_FIFO_DEPTH = spi_host_reg_pkg::TxDepth;
   // Flash commands
   localparam logic [12:0] FC_RD = 13'h03,  // Read Data
+  FC_PO = 13'hab,   // Power On
   FC_RSR1 = 13'h05,  // Read Status Register 1
   FC_WE = 13'h06,  // Write Enable
   FC_SE = 13'h20,  // Sector Erase 4KB
@@ -186,9 +192,10 @@ module axi_to_flash_controller
   // // // SFM
   // // TOP SFM state definition
   // Top controller FSM
-  typedef enum logic [sizeInBits(8)-1:0] {
+  typedef enum logic [sizeInBits(9)-1:0] {
     TOP_IDLE,     // Wait for valid AXI request
     TOP_AXIREQ,   // Memorize data from AXI master channels , spi_host_data_fifos is cleared
+    TOP_POWERON,  // Issue the power-on command to the flash and wait cycles before operating
     TOP_READ,     // Read beats from flash to beat queue or sector to sector buffer , beat queues are cleared
     TOP_FWAIT,    // Wait for flash internal operation
     TOP_ERASE,    // Erase flash sector
@@ -204,6 +211,16 @@ module axi_to_flash_controller
     AXIREQ_AW,         // Answer to AW channel request
     AXIREQ_W           // Answer to W channel request
   } axireq_state_e;
+  // // POWER ON SFM state definition
+  // Sends the power on command to the flash. Executed after AXIREQ if it hasn't been done before since reset.
+  typedef enum logic [sizeInBits(6)-1:0] {
+    POWERON_IDLE,                 
+    POWERON_SPI_CHECK_TX_FIFO,    // Check whether tx_fifo has room
+    POWERON_SPI_FILL_TX_FIFO,     // Write power-on command into tx_fifo (FC_PO)
+    POWERON_SPI_WAIT_READY,       // Wait for spi_host to be ready
+    POWERON_SPI_SEND_CMD,         // Send power-on flash write command to spi_host
+    POWERON_WAIT_CYCLES           // Wait cycles before normal operation
+  } poweron_state_e;
   // // READ SFM state definition
   // Handles flash read operation
   typedef enum logic [sizeInBits(16)-1:0] {
@@ -212,7 +229,7 @@ module axi_to_flash_controller
     READ_SET_RXWM_R,         // Read spi_host command
     READ_SET_RXWM_W,         // Rewrite the command with rx_fifo watermark set to 1, to be immediately warned when one word arrives
     READ_SPI_CHECK_TX_FIFO,  // Check whether tx_fifo has room
-    READ_SPI_FILL_TX_FIFO,   // Write command + address to tx_fifo
+    READ_SPI_FILL_TX_FIFO,   // Write read command (FC_RD) + address to tx_fifo
     READ_SPI_WAIT_READY_1,   // Wait for spi_host to be ready
     READ_SPI_SEND_CMD_1,     // Send address write command to spi_host
     READ_SPI_WAIT_READY_2,   // Wait for spi_host to be ready
@@ -303,6 +320,7 @@ module axi_to_flash_controller
   // FSM states
   top_state_e     top_state_q     , top_state_d;
   axireq_state_e  axireq_state_q  , axireq_state_d;
+  poweron_state_e poweron_state_q , poweron_state_d;
   read_state_e    read_state_q    , read_state_d;
   erase_state_e   erase_state_q   , erase_state_d;
   fwait_state_e   fwait_state_q   , fwait_state_d;
@@ -316,6 +334,8 @@ module axi_to_flash_controller
   logic [MaxBeatsDW-1:0]             beat_number_q          , beat_number_d;
   logic [DataBytes-1:0]              beat_size_q            , beat_size_d;
   logic                              rnw_q                  , rnw_d;
+  logic [PowerOnWaitCyclesDW-1:0]    poweron_wait_count_q   , poweron_wait_count_d;
+  logic                              flash_is_on_q          , flash_is_on_d;
   logic [FlashAddrW-1:0]             flash_addr_q           , flash_addr_d;
   logic                              first_sector_write_q   , first_sector_write_d;
   logic                              second_sector_write_q  , second_sector_write_d;
@@ -347,6 +367,7 @@ module axi_to_flash_controller
       // States
       top_state_q     <= TOP_IDLE;
       axireq_state_q  <= AXIREQ_IDLE;
+      poweron_state_q <= POWERON_IDLE;
       read_state_q    <= READ_IDLE;
       erase_state_q   <= ERASE_IDLE;
       fwait_state_q   <= FWAIT_IDLE;
@@ -360,6 +381,8 @@ module axi_to_flash_controller
       beat_number_q          <= '0;
       beat_size_q            <= '0;
       rnw_q                  <= '0;
+      poweron_wait_count_q   <= '0;
+      flash_is_on_q          <= '0;
       flash_addr_q           <= '0;
       first_sector_write_q   <= '0;
       second_sector_write_q  <= '0;
@@ -378,6 +401,7 @@ module axi_to_flash_controller
       // States
       top_state_q            <= top_state_d;
       axireq_state_q         <= axireq_state_d;
+      poweron_state_q        <= poweron_state_d;
       read_state_q           <= read_state_d;
       erase_state_q          <= erase_state_d;
       fwait_state_q          <= fwait_state_d;
@@ -391,6 +415,8 @@ module axi_to_flash_controller
       beat_number_q          <= beat_number_d;
       beat_size_q            <= beat_size_d;
       rnw_q                  <= rnw_d;
+      poweron_wait_count_q   <= poweron_wait_count_d;
+      flash_is_on_q          <= flash_is_on_d;
       flash_addr_q           <= flash_addr_d;
       first_sector_write_q   <= first_sector_write_d;
       second_sector_write_q  <= second_sector_write_d;
@@ -411,6 +437,19 @@ module axi_to_flash_controller
   logic [spi_host_reg_pkg::BlockAw-1:0] spi_host_reg_req_offset;
   assign spi_host_reg_req_o.addr = core_v_mini_mcu_pkg::SPI_FLASH_START_ADDRESS + {{(64 - spi_host_reg_pkg::BlockAw){1'b0}}, spi_host_reg_req_offset};
 
+// to shorten the simulation and to allow a smaller watchdog in the testbench, reduce the number of cycles waited inside the power-on rutine
+int actual_poweron_wait_cycles;
+`ifndef FPGA_SYNTHESIS
+`ifndef SYNTHESIS
+  assign actual_poweron_wait_cycles = PoweronWaitCycles_SIM;
+`else
+  assign actual_poweron_wait_cycles = PoweronWaitCycles;
+`endif
+`else
+  assign actual_poweron_wait_cycles = PoweronWaitCycles;
+`endif
+
+
   // // SFM flow : 
   //   - Read  (rnw=1): TOP_IDLE -> TOP_AXIREQ -> TOP_READ -> TOP_AXIRESP -> TOP_IDLE
   //   - Write (rnw=0): TOP_IDLE -> TOP_AXIREQ -> TOP_READ -> TOP_FWAIT -> TOP_ERASE -> TOP_FWAIT -> 
@@ -422,6 +461,7 @@ module axi_to_flash_controller
     // States
     top_state_d     = top_state_q;
     axireq_state_d  = axireq_state_q;
+    poweron_state_d = poweron_state_q;
     read_state_d    = read_state_q;
     erase_state_d   = erase_state_q;
     fwait_state_d   = fwait_state_q;
@@ -435,6 +475,8 @@ module axi_to_flash_controller
     beat_number_d          = beat_number_q;
     beat_size_d            = beat_size_q;
     rnw_d                  = rnw_q;
+    poweron_wait_count_d   = poweron_wait_count_q;
+    flash_is_on_d          = flash_is_on_q;
     flash_addr_d           = flash_addr_q;
     first_sector_write_d   = first_sector_write_q;
     second_sector_write_d  = second_sector_write_q;
@@ -512,8 +554,16 @@ module axi_to_flash_controller
             beat_size_d = 1 << ar_size;
             ar_ready = 1'b1;
             // Next state evaluation
-            axireq_state_d = AXIREQ_IDLE;
-            top_state_d = TOP_READ;
+            if (~flash_is_on_q) begin
+              // if, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to issue the power-on command
+              axireq_state_d = AXIREQ_IDLE;
+              top_state_d = TOP_POWERON;
+            end
+            else begin
+              // otherwise, we can go on with the normal operation
+              axireq_state_d = AXIREQ_IDLE;
+              top_state_d = TOP_READ;
+            end
           end
           AXIREQ_AW: begin
             // Answer to the AW channel
@@ -563,14 +613,84 @@ module axi_to_flash_controller
               end
             end
             // Next state evaluation
-            if (w_valid && axi2fls_wr_ready && w_last ) begin
-              top_state_d = TOP_READ;
-              axireq_state_d = AXIREQ_IDLE;
+            if ( w_valid && axi2fls_wr_ready && w_last ) begin
+              if (~flash_is_on_q) begin
+                // if, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to issue the power-on command
+                axireq_state_d = AXIREQ_IDLE;
+                top_state_d = TOP_POWERON;
+              end
+              else begin
+                // otherwise, we can go on with the normal operation
+                axireq_state_d = AXIREQ_IDLE;
+                top_state_d = TOP_READ;
+              end
             end
           end
         default: begin
           axireq_state_d = AXIREQ_IDLE;
         end
+        endcase
+      end
+      // // POWERON SFM
+      // Issue the power-on command to the flash and wait the required cycles before comencing operation
+      TOP_POWERON: begin
+        case(poweron_state_q)
+          POWERON_IDLE: begin
+            poweron_state_d = POWERON_SPI_CHECK_TX_FIFO;
+          end
+          POWERON_SPI_CHECK_TX_FIFO: begin
+            // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
+            if (external_spi_host_hw2reg_status_i.txqd.d < SPI_FLASH_TX_FIFO_DEPTH[7:0]) begin
+              poweron_state_d = POWERON_SPI_FILL_TX_FIFO;
+            end
+          end
+          POWERON_SPI_FILL_TX_FIFO: begin
+            // Write "power on" command in tx_fifo
+            spi_host_reg_req_offset  = SPI_HOST_TXDATA_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = {19'b0, FC_PO};
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              poweron_state_d = POWERON_SPI_WAIT_READY;
+            end
+          end
+          POWERON_SPI_WAIT_READY: begin
+            // Wait for spi_host to be ready (command queue not busy)
+            if (external_spi_host_hw2reg_status_i.ready.d) begin //TODO : update similar states checking this
+              poweron_state_d = POWERON_SPI_SEND_CMD;
+            end
+          end
+          POWERON_SPI_SEND_CMD: begin
+            // Send command to spi_host : send PO command to flash 
+            // COMMAND register format:
+            //   [31:29] = Reserved
+            //   [28:27] = Direction (2 = TX only)
+            //   [24]    = CSAAT (1 = keep CS asserted for next command)
+            //   [23:0]  = Length-1 (0 = 1 byte) (FC_OP is 1 byte command)
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = {
+              3'h0, 2'h2, 2'h0, 1'h1, 24'h0
+            };  // Empty + Direction + Speed + Csaat + Length
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              poweron_state_d = POWERON_WAIT_CYCLES;
+            end
+          end
+          POWERON_WAIT_CYCLES: begin
+            poweron_wait_count_d = poweron_wait_count_q + 1;
+            flash_is_on_d = (poweron_wait_count_d == actual_poweron_wait_cycles) ? 1'b1 : 1'b0;
+            // Next state evaluation
+            if (poweron_wait_count_d == actual_poweron_wait_cycles) begin
+              poweron_state_d = POWERON_IDLE;
+              top_state_d = TOP_READ;
+            end
+          end
+          default: begin
+            poweron_state_d = POWERON_IDLE;
+          end
         endcase
       end
       // // READ SFM

@@ -111,6 +111,17 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator AND
 // spi_host_reg_req_o.wdata = bitfield_byteswap32(
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator FUNCREF 'bitfield_byteswap32' expects 32 bits on the Function Argument, but Function Argument's OR generates 33 bits*"
 
+// flash_is_on_d = (poweron_wait_count_d == actual_poweron_wait_cycles) ? 1'b1 : 1'b0;
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'poweron_wait_count_d' generates 23 bits*"
+
+// rd_queue_buffer_d = spi_host_reg_rsp_i.rdata
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 64 bits on the Assign RHS, but Assign RHS's SEL generates 32 bits*"
+
+// beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the LHS, but LHS's VARREF 'beat_count_q' generates 5 bits*"
+
+// if (wait_latency_count_q == SectorBufferLatency) begin
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'wait_latency_count_q' generates 1 bits*"
 
 
 // lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "**"
@@ -135,7 +146,7 @@ lint_off -rule WIDTH -file "*ip/w25q128jw_controller/rtl/w25q128jw_controller*" 
 //                                       spiflash
 // ============================================================================================
 
-lint_off -rule WIDTH -file "*sim/yosys_spiflash*" -match "*"
+lint_off -rule WIDTH -file "*tb/yosys_spiflash*" -match "*"
 
 
 // ============================================================================================

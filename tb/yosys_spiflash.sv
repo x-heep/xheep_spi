@@ -78,7 +78,7 @@ module spiflash (
   logic [7:0] spi_out;
   logic spi_io_vld;
 
-  // logic powered_up = 0;
+  logic powered_up = 0;
   logic write_enable = 0;
   logic write_enable_reset = 0;
   logic quad_enable = 0;
@@ -143,7 +143,7 @@ always_comb begin
   end
 end
 
-  logic powered_up = 1; // temporarily fixed to 1, later implement rutine to manualy set this
+  // powered_up = 1; // temporarily fixed to 1, later implement rutine to manualy set this
   // otherwise spi_address fixed to 0
 
   // _-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_
