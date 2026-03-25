@@ -114,8 +114,8 @@ void genAxiManagerR(Vspi_subsystem_tb_wrapper* dut);
 
 int main(int argc, char *argv[]){
 
-    std::cout<<"Bus size currently set to "<< 32+32*AXI_DATA_SIZE_IS_64_n32<<
-    ", if incorrect, change the define AXI_DATA_SIZE_IS_64_n32 in the testbench"<<std::endl;
+    std::cout<< BLUE << BOLD << "Bus size currently set to "<< 32+32*AXI_DATA_SIZE_IS_64_n32<<
+    ", if incorrect, change the define AXI_DATA_SIZE_IS_64_n32 in the testbench"<< RESET << std::endl;
 
     // Define command-line options
     const option longopts[] = {
@@ -246,7 +246,11 @@ int main(int argc, char *argv[]){
         for(int i=0; i<DEFAULT_AXI_NUM; i++)
             axi_wdata_vector.push_back( AXI_DATA_SIZE_IS_64_n32 ? DEFAULT_AXI_WDATA_64[i] : DEFAULT_AXI_WDATA_32[i] );
     }
-    std::cout << BLUE << BOLD << "Data vector:" << RESET << std::endl;
+    std::cout<< BLUE << BOLD << "AXI attributes:" << RESET << std::endl;
+    std::cout<< BLUE << "       LENGHT " << RESET << axi_num << std::endl;
+    std::cout<< BLUE << "       SIZE " << RESET << axi_size << std::endl;
+    std::cout<< BLUE << "       ADDR " << RESET << axi_addr << std::endl;
+    std::cout<< BLUE << BOLD << "AXI Write Data vector:" << RESET << std::endl;
     for (const auto& x : axi_wdata_vector) {
         printf("0x%016llX\n", x);
     }
@@ -615,7 +619,7 @@ int main(int argc, char *argv[]){
         cntx->timeInc(1);
     }
 
-    std::cout << YELLOW << BOLD << "Read data:" << RESET << std::endl;
+    std::cout << YELLOW << BOLD << "AXI Read data:" << RESET << std::endl;
     for (const auto& x : axi_rdata_vector) {
         if(AXI_DATA_SIZE_IS_64_n32){
             printf("0x%016llX\n", x);
@@ -625,47 +629,51 @@ int main(int argc, char *argv[]){
     }
 
 // --- Data Comparison Section ---
-    std::cout << std::endl << BLUE << BOLD << "========================================" << RESET << std::endl;
-    std::cout << BOLD << "          DATA INTEGRITY CHECK" << RESET << std::endl;
-    std::cout << BLUE << BOLD << "========================================" << RESET << std::endl;
+// Random data doesn't work with data check because active byte lane rotation is not implemented with random data
+    if(!random){
+        std::cout << std::endl << BLUE << BOLD << "========================================" << RESET << std::endl;
+        std::cout << BOLD << "          DATA INTEGRITY CHECK" << RESET << std::endl;
+        std::cout << BLUE << BOLD << "========================================" << RESET << std::endl;
 
-    bool test_failed = false;
-    
-    // First, verify if the number of read beats matches the number of written beats
-    if (axi_rdata_vector.size() != axi_wdata_vector.size()) {
-        std::cout << RED << BOLD << "ERROR: Mismatch in number of beats!" << RESET << std::endl;
-        std::cout << "Expected: " << axi_wdata_vector.size() << " | Received: " << axi_rdata_vector.size() << std::endl;
-        test_failed = true;
-    } else {
-        // Iterate through the vectors and compare each beat
-        for (size_t i = 0; i < axi_wdata_vector.size(); ++i) {
-            uint64_t expected = axi_wdata_vector[i];
-            uint64_t received = axi_rdata_vector[i];
+        bool test_failed = false;
+        
+        // First, verify if the number of read beats matches the number of written beats
+        if (axi_rdata_vector.size() != axi_wdata_vector.size()) {
+            std::cout << RED << BOLD << "ERROR: Mismatch in number of beats!" << RESET << std::endl;
+            std::cout << "Expected: " << axi_wdata_vector.size() << " | Received: " << axi_rdata_vector.size() << std::endl;
+            test_failed = true;
+        } else {
+            // Iterate through the vectors and compare each beat
+            for (size_t i = 0; i < axi_wdata_vector.size(); ++i) {
+                uint64_t expected = axi_wdata_vector[i];
+                uint64_t received = axi_rdata_vector[i];
 
-            // If the bus is 32-bit, mask the upper 32 bits to ensure a fair comparison
-            if (!AXI_DATA_SIZE_IS_64_n32) {
-                expected &= 0x00000000FFFFFFFFULL;
-            }
+                // If the bus is 32-bit, mask the upper 32 bits to ensure a fair comparison
+                if (!AXI_DATA_SIZE_IS_64_n32) {
+                    expected &= 0x00000000FFFFFFFFULL;
+                }
 
-            if (expected != received) {
-                // Print detailed error message on mismatch
-                printf(RED "Mismatch at beat [%zu]: Expected 0x%016llX, Got 0x%016llX" RESET "\n", i, expected, received);
-                test_failed = true;
-            } else {
-                // Confirm successful match for the current beat
-                printf(GREEN "Beat [%zu]: Pass (0x%016llX)" RESET "\n", i, received);
+                if (expected != received) {
+                    // Print detailed error message on mismatch
+                    printf(RED "Mismatch at beat [%zu]: Expected 0x%016llX, Got 0x%016llX" RESET "\n", i, expected, received);
+                    test_failed = true;
+                } else {
+                    // Confirm successful match for the current beat
+                    printf(GREEN "Beat [%zu]: Pass (0x%016llX)" RESET "\n", i, received);
+                }
             }
         }
-    }
 
-    // Final simulation status report
-    if (test_failed) {
-        std::cout << RED << BOLD << "\nTEST STATUS: FAILED" << RESET << std::endl;
-    } else {
-        std::cout << GREEN << BOLD << "\nTEST STATUS: SUCCESS" << RESET << std::endl;
+        // Final simulation status report
+        if (test_failed) {
+            std::cout << RED << BOLD << "\nTEST STATUS: FAILED" << RESET << std::endl;
+        } else {
+            std::cout << GREEN << BOLD << "\nTEST STATUS: SUCCESS" << RESET << std::endl;
+        }
+        std::cout << BLUE << BOLD << "========================================" << RESET << std::endl << std::endl;
     }
-    std::cout << BLUE << BOLD << "========================================" << RESET << std::endl << std::endl;
-    // --- End of Data Comparison Section ---
+// --- End of Data Comparison Section ---
+
 
     // Simulation complete
     dut->final();
