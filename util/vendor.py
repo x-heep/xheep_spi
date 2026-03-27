@@ -289,13 +289,6 @@ class Mapping1:
             # Check that the paths aren't evil ('../../../foo' or '/etc/passwd'
             # are *not* ok!)
             val = os.path.normpath(val)
-            if val.startswith("/") or val.startswith(".."):
-                raise JsonError(
-                    path,
-                    "Mapping entry {} has a bad path for {!r} "
-                    "(must be a relative path that doesn't "
-                    "escape the directory)".format(idx + 1, name),
-                )
 
             return Path(val)
 
@@ -331,10 +324,10 @@ class Mapping1:
         # shutil.copytree. This doesn't support files, though, so we have to
         # check for them first.
         if from_path.is_file():
-            shutil.copy(str(from_path), str(to_path))
+            shutil.copy(str(from_path), str(to_path), follow_symlinks=False)
         else:
             ignore = ignore_patterns(str(upstream_path), *exclude_files)
-            shutil.copytree(str(from_path), str(to_path), ignore=ignore)
+            shutil.copytree(str(from_path), str(to_path), ignore=ignore, symlinks=True)
 
         # Apply any patches to the copied files. If self.patch_dir is None,
         # there are none to apply. Otherwise, resolve it relative to patch_dir.
@@ -376,11 +369,20 @@ class Mapping:
 class LockDesc:
     """A class representing the contents of a lock file for a specific vendor"""
 
-    def __init__(self, handle, name):
+    def __init__(self, handle, name, use_named_entry=True):
         data = hjson.loads(handle.read(), use_decimal=True)
-        if name not in data:
-            raise KeyError(name)
-        vendor_data = data[name]
+        if use_named_entry:
+            if name not in data:
+                raise KeyError(name)
+            vendor_data = data[name]
+        else:
+            if "upstream" in data:
+                vendor_data = data
+            elif name in data:
+                vendor_data = data[name]
+            else:
+                raise KeyError(name)
+
         self.upstream = get_field(
             handle.name,
             "in vendor {!r}".format(name),
@@ -402,6 +404,11 @@ class Desc:
             return path.parent / p
 
         self.path = path
+        # Default lock-file behavior is one shared lock keyed by vendor name.
+        # parse_vendor_file() can override this for per-vendor single-entry
+        # files.
+        self.use_named_lock_entry = True
+        self._lock_file_override = None
         self.name = get_field(path, where, data, "name", expected_type=str)
         self.target_dir = get_field(
             path, where, data, "target_dir", expected_type=str, constructor=take_path
@@ -513,7 +520,14 @@ class Desc:
             # Single-entry format
             if module_filter and data.get("name") != module_filter:
                 return []
-            return [Desc(path, data, desc_overrides)]
+            desc = Desc(path, data, desc_overrides)
+            # Keep lock filename aligned with vendor filename.
+            # Example: foo.vendor.hjson -> foo.lock.hjson.
+            desc.use_named_lock_entry = False
+            vendor_suffix = ".vendor.hjson"
+            base_name = path.name[: -len(vendor_suffix)]
+            desc._lock_file_override = path.with_name(base_name + ".lock.hjson")
+            return [desc]
         else:
             # Multi-entry format: each key is a project
             vendor_name = path.name.rsplit(".", 2)[0]
@@ -530,7 +544,11 @@ class Desc:
                 project_data["name"] = project_name
                 if "target_dir" not in project_data:
                     project_data["target_dir"] = str(Path(vendor_name) / project_name)
-                descs.append(Desc(path, project_data, desc_overrides))
+                desc = Desc(path, project_data, desc_overrides)
+                # Multi-entry files share a single lock file.
+                desc.use_named_lock_entry = True
+                desc._lock_file_override = path.with_name("vendor.lock.hjson")
+                descs.append(desc)
 
             if module_filter and not descs:
                 raise JsonError(
@@ -557,7 +575,11 @@ class Desc:
             ref[split_keys[-1]] = value
 
     def lock_file_path(self):
-        return self.path.with_name("vendor.lock.hjson")
+        if self._lock_file_override is not None:
+            return self._lock_file_override
+
+        desc_file_stem = self.path.name.rsplit(".", 2)[0]
+        return self.path.with_name(desc_file_stem + ".lock.hjson")
 
     def import_from_upstream(self, upstream_path):
         log.info("Copying upstream sources to {}".format(self.target_dir))
@@ -601,7 +623,7 @@ def refresh_patches(desc):
 
 def _export_patches(patchrepo_clone_url, target_patch_dir, upstream_rev, patched_rev):
     with tempfile.TemporaryDirectory() as clone_dir:
-        clone_git_repo(patchrepo_clone_url, clone_dir, patched_rev)
+        clone_git_repo(patchrepo_clone_url, clone_dir, patched_rev, recursive=False)
         rev_range = "origin/" + upstream_rev + ".." + "origin/" + patched_rev
         cmd = [
             "git",
@@ -635,32 +657,41 @@ def ignore_patterns(base_dir, *patterns):
     return _ignore_patterns
 
 
-def clone_git_repo(repo_url, clone_dir, rev="master"):
-    log.info("Cloning upstream repository %s @ %s", repo_url, rev)
+def clone_git_repo(repo_url, clone_dir, rev='master', recursive=False):
+    log.info('Cloning upstream repository %s @ %s', repo_url, rev)
 
     # Clone the whole repository
-    cmd = ["git", "clone", "--no-single-branch"]
+    cmd = ['git', 'clone', '--no-single-branch']
+
+    if recursive:
+        cmd.append('--recursive')
+
     if not verbose:
-        cmd += ["-q"]
+        cmd += ['-q']
     cmd += [repo_url, str(clone_dir)]
     subprocess.run(cmd, check=True)
 
     # Check out exactly the revision requested
-    cmd = ["git", "-C", str(clone_dir), "checkout", "--force", rev]
+    cmd = ['git', '-C', str(clone_dir), 'checkout', '--force', '--recurse-submodules', rev]
     if not verbose:
-        cmd += ["-q"]
+        cmd += ['-q']
     subprocess.run(cmd, check=True)
 
+    if recursive:
+        # Explicit update to ensure nested submodules are grabbed
+        cmd = ['git', '-C', str(clone_dir), 'submodule', 'update', '--init', '--recursive']
+        if not verbose:
+            cmd += ['-q']
+        subprocess.run(cmd, check=True)
+
     # Get revision information
-    cmd = ["git", "-C", str(clone_dir), "rev-parse", "HEAD"]
-    rev = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-        universal_newlines=True,
-    ).stdout.strip()
-    log.info("Cloned at revision %s", rev)
+    cmd = ['git', '-C', str(clone_dir), 'rev-parse', 'HEAD']
+    rev = subprocess.run(cmd,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE,
+                         check=True,
+                         universal_newlines=True).stdout.strip()
+    log.info('Cloned at revision %s', rev)
     return rev
 
 
@@ -726,7 +757,9 @@ def process_vendor(desc, args):
     # Try to load lock file
     try:
         with open(str(lock_file_path), "r") as lock_file:
-            lock = LockDesc(lock_file, desc.name)
+            lock = LockDesc(
+                lock_file, desc.name, use_named_entry=desc.use_named_lock_entry
+            )
     except (FileNotFoundError, KeyError):
         lock = None
 
@@ -749,7 +782,7 @@ def process_vendor(desc, args):
     with tempfile.TemporaryDirectory() as clone_dir:
         # clone upstream repository
         upstream_new_rev = clone_git_repo(
-            desc.upstream.url, clone_dir, rev=desc.upstream.rev
+            desc.upstream.url, clone_dir, rev=desc.upstream.rev, recursive=True
         )
 
         if not update:
@@ -814,7 +847,10 @@ def process_vendor(desc, args):
                     lock_data = hjson.loads(f.read(), use_decimal=True)
             vendor_entry = desc.upstream.as_dict()
             vendor_entry["rev"] = upstream_new_rev
-            lock_data[desc.name] = {"upstream": vendor_entry}
+            if desc.use_named_lock_entry:
+                lock_data[desc.name] = {"upstream": vendor_entry}
+            else:
+                lock_data = {"upstream": vendor_entry}
             with open(str(lock_file_path), "w", encoding="UTF-8") as f:
                 f.write(LOCK_FILE_HEADER)
                 hjson.dump(lock_data, f)
