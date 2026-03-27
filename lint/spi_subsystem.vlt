@@ -21,16 +21,16 @@ lint_off -rule SYMRSVDWORD -file "*rtl/spi_device_reg_pkg*" -match "*Symbol matc
 // ============================================================================================
 
 // parameter int unsigned NumWords = 13'h400
-lint_off -rule WIDTH -file "*sim/sram_wrapper*" -match "*Operator VAR 'NumWords' expects 32 bits on the Initial value, but Initial value's CONST '13'h400' generates 13 bits*"
+lint_off -rule WIDTH -file "*tb/sram_wrapper*" -match "*Operator VAR 'NumWords' expects 32 bits on the Initial value, but Initial value's CONST '13'h400' generates 13 bits*"
 
 
 // ============================================================================================
 //                                      tc_sram
 // ============================================================================================
 
-lint_off -rule WIDTH -file "*sim/tc_sram.sv*" -match "*Operator ASSIGN expects*"
-lint_off -rule WIDTH -file "*sim/tc_sram.sv*" -match "*Operator CASE expects*"
-lint_off -rule UNSIGNED -file "*sim/tc_sram.sv*" -match "*Comparison is constant due to unsigned arithmetic*"
+lint_off -rule WIDTH -file "*tb/tc_sram.sv*" -match "*Operator ASSIGN expects*"
+lint_off -rule WIDTH -file "*tb/tc_sram.sv*" -match "*Operator CASE expects*"
+lint_off -rule UNSIGNED -file "*tb/tc_sram.sv*" -match "*Comparison is constant due to unsigned arithmetic*"
 
 
 // ============================================================================================

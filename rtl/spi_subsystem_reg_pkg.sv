@@ -19,7 +19,7 @@ package spi_subsystem_reg_pkg;
     } use_axi;
     struct packed {
       logic        q;
-    } unused;
+    } a2f_ctr_poweron_en;
   } spi_subsystem_reg2hw_control_reg_t;
 
   typedef struct packed {
@@ -30,7 +30,7 @@ package spi_subsystem_reg_pkg;
     struct packed {
       logic        d;
       logic        de;
-    } unused;
+    } a2f_ctr_poweron_en;
   } spi_subsystem_hw2reg_control_reg_t;
 
   // Register -> HW type
@@ -53,7 +53,7 @@ package spi_subsystem_reg_pkg;
 
   // Register width information to check illegal writes
   parameter logic [3:0] SPI_SUBSYSTEM_PERMIT [1] = '{
-    4'b 1111  // index[0] SPI_SUBSYSTEM_CONTROL
+    4'b 0001  // index[0] SPI_SUBSYSTEM_CONTROL
   };
 
 endpackage

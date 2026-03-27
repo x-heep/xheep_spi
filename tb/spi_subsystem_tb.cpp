@@ -176,8 +176,8 @@ int main(int argc, char *argv[]){
                 break;
 
             case 'a': // address of first beat (bytes)
-                if (strtoul(optarg, NULL, 0)>=0x0 && strtoul(optarg, NULL, 0)<=0x00ffffff) {
-                    axi_addr = strtoul(optarg, NULL, 0);;
+                if ((uint32_t)strtoul(optarg, NULL, 0)<=0x00ffffff) {
+                    axi_addr = strtoul(optarg, NULL, 0);
                 }
                 else {
                     std::cout<< RED << BOLD << "Incorrect value for addr_beat"<< RESET <<std::endl;
@@ -249,7 +249,7 @@ int main(int argc, char *argv[]){
     std::cout<< BLUE << BOLD << "AXI attributes:" << RESET << std::endl;
     std::cout<< BLUE << "       LENGHT " << RESET << axi_num << std::endl;
     std::cout<< BLUE << "       SIZE " << RESET << axi_size << std::endl;
-    std::cout<< BLUE << "       ADDR " << RESET << axi_addr << std::endl;
+    std::cout<< BLUE << "       ADDR " << RESET << "0x" << std::hex << axi_addr << std::dec << std::endl;
     std::cout<< BLUE << BOLD << "AXI Write Data vector:" << RESET << std::endl;
     for (const auto& x : axi_wdata_vector) {
         printf("0x%016llX\n", x);
@@ -269,7 +269,7 @@ int main(int argc, char *argv[]){
 
     enum state_t{
         IDLE,
-        CFG_SPISUBSYS_USEAXI,
+        CFG_SPISUBSYS_CONTROL,
         CFG_SPIHOST_SWRST_1,
         CFG_SPIHOST_SWRST_WAIT,
         CFG_SPIHOST_SWRST_0,
@@ -285,7 +285,7 @@ int main(int argc, char *argv[]){
         AXI_R,
         FINISH
     };
-    state_t state = CFG_SPISUBSYS_USEAXI;
+    state_t state = CFG_SPISUBSYS_CONTROL;
     state_t prev_state;
     uint64_t base;
     uint64_t offset;
@@ -302,6 +302,7 @@ int main(int argc, char *argv[]){
     unsigned int beat_count = 0;
     unsigned int sw_rst_cnt=0;
     unsigned int idle_cycles_cnt=0;
+    unsigned long int t1,t2,t3;
 
     std::cout << GREEN << BOLD << "Starting simulation ..." << RESET << std::endl;
 
@@ -321,20 +322,20 @@ int main(int argc, char *argv[]){
             switch (state){
                 case IDLE:
                     if(idle_cycles_cnt++ > IDLE_CYCLES){
-                        state = CFG_SPISUBSYS_USEAXI;
+                        state = CFG_SPISUBSYS_CONTROL;
                         idle_cycles_cnt = 0;
                     }
                     break;
 
-                case CFG_SPISUBSYS_USEAXI:
-                    // spi_subsystem register configuration : use_axi
+                case CFG_SPISUBSYS_CONTROL:
                     if(!msg_printed){
-                        std::cout<<"Configuring use_axi ... "<<std::endl;
+                        std::cout<<"Configuring spi_subsystem control ... "<<std::endl;
                         msg_printed=1;
                     }
                     base = SPI_SUBSYSTEM_START_ADDRESS;
                     offset = SPI_SUBSYSTEM_CONTROL_OFFSET;
-                    reg_data = reg_data | (1 << 0);
+                    reg_data = reg_data | (1 << 0);     // use_axi
+                    reg_data = reg_data | (1 << 1);     // a2f_ctr_poweron_en
                     genRegWriteReq(dut,base,offset,reg_data);
                     if(dut->subsys_reg_ready_o && !dut->subsys_reg_error_o){
                         state = CFG_SPIHOST_SWRST_1;
@@ -344,9 +345,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_SWRST_1:
-                    // spi_host register configuration : sw_rst = 1
                     if(!msg_printed){
-                        std::cout<<"Configuring sw_rst = 1 ... "<<std::endl;
+                        std::cout<<"Asserting spi_host sw_rst ... "<<std::endl;
                         msg_printed=1;
                     }
                     base = SPI_FLASH_START_ADDRESS;
@@ -368,9 +368,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_SWRST_0:
-                    // spi_host register configuration : sw_rst = 0
                     if(!msg_printed){
-                        std::cout<<"Configuring sw_rst = 0 ... "<<std::endl;
+                        std::cout<<"Deasserting spi_host sw_rst ... "<<std::endl;
                         msg_printed=1;
                     }              
                     base = SPI_FLASH_START_ADDRESS;
@@ -385,9 +384,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_CSID:
-                    // spi_host register configuration : csid
                     if(!msg_printed){
-                        std::cout<<"Configuring csid ... "<<std::endl;
+                        std::cout<<"Configuring spi_host csid ... "<<std::endl;
                         msg_printed=1;
                     }                     
                     offset = SPI_HOST_CSID_OFFSET;
@@ -401,9 +399,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_INTR_ENABLE:
-                    // spi_host register configuration : intr_enable
                     if(!msg_printed){
-                        std::cout<<"Configuring intr_enable ... "<<std::endl;
+                        std::cout<<"Configuring spi_host intr_enable ... "<<std::endl;
                         msg_printed=1;
                     }          
                     offset = SPI_HOST_INTR_ENABLE_OFFSET;
@@ -417,9 +414,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_EVENT_ENABLE:
-                    // spi_host register configuration : event_enable
                     if(!msg_printed){
-                        std::cout<<"Configuring event_enable ... "<<std::endl; 
+                        std::cout<<"Configuring spi_host event_enable ... "<<std::endl; 
                         msg_printed=1;
                     }  
                     offset = SPI_HOST_EVENT_ENABLE_OFFSET;
@@ -433,9 +429,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_ERROR_ENABLE:
-                    // spi_host register configuration : error_enable
                     if(!msg_printed){
-                        std::cout<<"Configuring error_enable ... "<<std::endl;                    
+                        std::cout<<"Configuring spi_host error_enable ... "<<std::endl;                    
                         msg_printed=1;
                     } 
                     offset = SPI_HOST_ERROR_ENABLE_OFFSET;
@@ -449,9 +444,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_CONFIGOPTS_0:
-                    // spi_host register configuration : configopts[0]
                     if(!msg_printed){
-                        std::cout<<"Configuring configopts[0] ... "<<std::endl;                    
+                        std::cout<<"Configuring spi_host configopts[0] ... "<<std::endl;                    
                         msg_printed=1;
                     } 
                     offset = SPI_HOST_CONFIGOPTS_0_OFFSET;
@@ -478,9 +472,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case CFG_SPIHOST_CONTROL:
-                    // spi_host register configuration : control
                     if(!msg_printed){
-                        std::cout<<"Configuring control ... "<<std::endl;                    
+                        std::cout<<"Configuring spi_host control ... "<<std::endl;                    
                         msg_printed=1;
                     } 
                     offset = SPI_HOST_CONTROL_OFFSET;
@@ -503,7 +496,8 @@ int main(int argc, char *argv[]){
                 case AXI_AW_W:
                     // AXI write operation : AW and W
                     if(!msg_printed){
-                        std::cout<<" Writing on AXI AW and W channels ... "<<std::endl;                    
+                        std::cout<<"Writing on AXI AW and W channels ... "<<std::endl;
+                        t1=cntx->time();  
                         msg_printed=1;
                     }
                     // AW
@@ -541,9 +535,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case AXI_B:
-                    // AXI write operation : B
                     if(!msg_printed){
-                        std::cout<<" Responding on AXI B channel ... "<<std::endl;                  
+                        std::cout<<"Responding on AXI B channel ... "<<std::endl;                  
                         msg_printed=1;
                     }
                     genAxiManagerB(dut);
@@ -555,9 +548,9 @@ int main(int argc, char *argv[]){
                     break;
 
                 case AXI_AR:
-                    // AXI read operation : AR
                     if(!msg_printed){
-                        std::cout<<" Writing on AXI AR channel ... "<<std::endl;                
+                        std::cout<<"Writing on AXI AR channel ... "<<std::endl;
+                        t2=cntx->time();        
                         msg_printed=1;
                     }
                     genAxiManagerAR(dut,axi_addr,axi_num,axi_size);
@@ -569,9 +562,8 @@ int main(int argc, char *argv[]){
                     break;
 
                 case AXI_R:
-                    // AXI read operation : R
                     if(!msg_printed){
-                        std::cout<<" Responding on AXI R channel ... "<<std::endl;               
+                        std::cout<<"Responding on AXI R channel ... "<<std::endl;               
                         msg_printed=1;
                     }
                     genAxiManagerR(dut);
@@ -587,8 +579,12 @@ int main(int argc, char *argv[]){
                     break;
 
                 case FINISH:
+                    if(!msg_printed){
+                        std::cout<< GREEN << BOLD << "Simulation terminated correctly"<< RESET << std::endl;
+                        t3=cntx->time();
+                        msg_printed=1;
+                    }
                     end_of_sim = 1;
-                    std::cout<<"Simulation terminated correctly"<<std::endl;
                     break;
 
                 default : end_of_sim = 1;
@@ -608,7 +604,6 @@ int main(int argc, char *argv[]){
             if (end_of_sim)
             {
                 if (exit_timer++ == END_OF_TEST_TIMEOUT) {
-                    std::cout<<"End of simulation reached: terminating."<<std::endl;
                     break;
                 }
             }
@@ -622,9 +617,9 @@ int main(int argc, char *argv[]){
     std::cout << YELLOW << BOLD << "AXI Read data:" << RESET << std::endl;
     for (const auto& x : axi_rdata_vector) {
         if(AXI_DATA_SIZE_IS_64_n32){
-            printf("0x%016llX\n", x);
+            printf("    0x%016llX\n", x);
         }else{
-            printf("0x%08llX\n", x);
+            printf("    0x%08llX\n", x);
         }
     }
 
@@ -674,6 +669,10 @@ int main(int argc, char *argv[]){
     }
 // --- End of Data Comparison Section ---
 
+    std::cout << BOLD << "-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-."<< RESET << std::endl;
+    std::cout << BOLD << "Number of cycles :"<< RESET << std::endl;
+    std::cout <<"   WRITE: " << (t2-t1)/2 << std::endl;
+    std::cout <<"   READ: " << (t3-t2)/2 << std::endl;
 
     // Simulation complete
     dut->final();
@@ -727,6 +726,7 @@ void clearHandshake(Vspi_subsystem_tb_wrapper* dut){
     dut->w_valid_i=0;
     dut->w_last_i=0;
     dut->b_ready_i=0;
+    dut->ar_valid_i=0;
 }
 
 void genRegWriteReq(Vspi_subsystem_tb_wrapper* dut, uint64_t base, uint64_t offset, uint32_t reg_data){

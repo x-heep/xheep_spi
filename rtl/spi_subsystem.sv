@@ -16,30 +16,18 @@ module spi_subsystem
   import spi_host_reg_pkg::*;
 #(
     parameter int DataWidth = 64,
-	  parameter int AddrWidth = 64,
-    parameter logic ByteOrder = 1,  // 1 = little endian , 0 = big endian
+    parameter int AddrWidth = 64,
     parameter type reg_req_t = logic,
     parameter type reg_rsp_t = logic,
     parameter type axi_req_t = logic,
     parameter type axi_resp_t = logic,
-    parameter type obi_req_t = logic,
-    parameter type obi_resp_t = logic
+    parameter logic ByteOrder = 1  // 1 = little endian , 0 = big endian
 
 )(
 
     input logic clk_i,
     input logic rst_ni,
 
-    // Select signal between spimemio and spi_host (YOSYS and OpenTitan)
-    input logic use_spimemio_i,
-
-    // spimemio data interface (obi)
-    input  obi_req_t  spimemio_obi_req_i,
-    output obi_resp_t spimemio_obi_resp_o,
-
-    // spimemio configuration interface (reg)
-    input  reg_req_t  spimemio_reg_req_i,
-    output reg_rsp_t  spimemio_reg_rsp_o,
 
     // AXI interface
     input  axi_req_t  axi_req_i,
@@ -53,17 +41,6 @@ module spi_subsystem
     input  reg_req_t  spihost_reg_req_i,
     output reg_rsp_t  spihost_reg_rsp_o,
 
-    // w25q128jw flash controller configuration interface
-    input  reg_req_t  w25_ctr_reg_req_i,
-    output reg_rsp_t  w25_ctr_reg_rsp_o,
-
-
-    // flash controller interrupt
-    output logic w25q128jw_controller_intr_o,
-
-    // DMA handshake
-    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_ready_i,
-    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i,
 
     // SPI Interface
     output logic                               spi_flash_sck_o,
@@ -100,11 +77,6 @@ module spi_subsystem
 
   spi_host_reg_pkg::spi_host_hw2reg_status_reg_t external_spi_host_hw2reg_status;
 
-  obi_resp_t obi_rsp_unused;
-  reg_rsp_t reg_rsp_unused;
-  assign reg_rsp_unused = '0;
-  assign obi_rsp_unused = '0;
-
 
 always_comb begin
   spi_flash_sck_o = ot_spi_sck;
@@ -119,9 +91,6 @@ always_comb begin
   spi_flash_rx_valid_o = ot_spi_rx_valid;
   spi_flash_tx_ready_o = ot_spi_tx_ready;
 end
-
-  assign spimemio_obi_resp_o = obi_rsp_unused;
-  assign spimemio_reg_rsp_o = reg_rsp_unused;
 
 
 
@@ -145,6 +114,9 @@ end
       // Enable by xspi register
       .en_i(reg2hw.control.use_axi.q),
 
+      // Enable power-on subrutine
+      .poweron_en_i(reg2hw.control.a2f_ctr_poweron_en.q),
+
       // register interface to SPI controller
       .spi_host_reg_req_o(reg_req_from_a2f_ctr),
       .spi_host_reg_rsp_i(reg_rsp_to_a2f_ctr),
@@ -160,10 +132,6 @@ end
 
   reg_req_t muxed_controllers_reg_req;
   reg_rsp_t muxed_controllers_reg_rsp;
-
-
-  assign w25_ctr_reg_rsp_o = '0;
-  assign w25q128jw_controller_intr_o = '0;
 
 
 
@@ -255,15 +223,5 @@ end
       .devmode_i(1'b1)
   );
 
-`ifndef SYNTHESIS
-
-  always_ff @(posedge clk_i) begin : yosys_spi_write
-    if (spimemio_obi_req_i.req && spimemio_obi_req_i.we) begin
-      $error("%t: Writing to Yosys OBI SPI port", $time);
-      $finish;
-    end
-  end
-
-`endif
 
 endmodule  // spi_subsystem

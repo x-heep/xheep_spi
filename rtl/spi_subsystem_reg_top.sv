@@ -33,7 +33,7 @@ module spi_subsystem_reg_top #(
   // register signals
   logic           reg_we;
   logic           reg_re;
-  logic [AW-1:0]  reg_addr;
+  logic [BlockAw-1:0]  reg_addr;
   logic [DW-1:0]  reg_wdata;
   logic [DBW-1:0] reg_be;
   logic [DW-1:0]  reg_rdata;
@@ -54,7 +54,7 @@ module spi_subsystem_reg_top #(
 
   assign reg_we = reg_intf_req.valid & reg_intf_req.write;
   assign reg_re = reg_intf_req.valid & ~reg_intf_req.write;
-  assign reg_addr = reg_intf_req.addr;
+  assign reg_addr = reg_intf_req.addr[BlockAw-1:0];
   assign reg_wdata = reg_intf_req.wdata;
   assign reg_be = reg_intf_req.wstrb;
   assign reg_intf_rsp.rdata = reg_rdata;
@@ -71,9 +71,9 @@ module spi_subsystem_reg_top #(
   logic control_use_axi_qs;
   logic control_use_axi_wd;
   logic control_use_axi_we;
-  logic control_unused_qs;
-  logic control_unused_wd;
-  logic control_unused_we;
+  logic control_a2f_ctr_poweron_en_qs;
+  logic control_a2f_ctr_poweron_en_wd;
+  logic control_a2f_ctr_poweron_en_we;
 
   // Register instances
   // R[control]: V(False)
@@ -104,29 +104,29 @@ module spi_subsystem_reg_top #(
   );
 
 
-  //   F[unused]: 31:31
+  //   F[a2f_ctr_poweron_en]: 1:1
   prim_subreg #(
     .DW      (1),
     .SWACCESS("RW"),
     .RESVAL  (1'h0)
-  ) u_control_unused (
+  ) u_control_a2f_ctr_poweron_en (
     .clk_i   (clk_i    ),
     .rst_ni  (rst_ni  ),
 
     // from register interface
-    .we     (control_unused_we),
-    .wd     (control_unused_wd),
+    .we     (control_a2f_ctr_poweron_en_we),
+    .wd     (control_a2f_ctr_poweron_en_wd),
 
     // from internal hardware
-    .de     (hw2reg.control.unused.de),
-    .d      (hw2reg.control.unused.d ),
+    .de     (hw2reg.control.a2f_ctr_poweron_en.de),
+    .d      (hw2reg.control.a2f_ctr_poweron_en.d ),
 
     // to internal hardware
     .qe     (),
-    .q      (reg2hw.control.unused.q ),
+    .q      (reg2hw.control.a2f_ctr_poweron_en.q ),
 
     // to register interface (read)
-    .qs     (control_unused_qs)
+    .qs     (control_a2f_ctr_poweron_en_qs)
   );
 
 
@@ -149,8 +149,8 @@ module spi_subsystem_reg_top #(
   assign control_use_axi_we = addr_hit[0] & reg_we & !reg_error;
   assign control_use_axi_wd = reg_wdata[0];
 
-  assign control_unused_we = addr_hit[0] & reg_we & !reg_error;
-  assign control_unused_wd = reg_wdata[31];
+  assign control_a2f_ctr_poweron_en_we = addr_hit[0] & reg_we & !reg_error;
+  assign control_a2f_ctr_poweron_en_wd = reg_wdata[1];
 
   // Read data return
   always_comb begin
@@ -158,7 +158,7 @@ module spi_subsystem_reg_top #(
     unique case (1'b1)
       addr_hit[0]: begin
         reg_rdata_next[0] = control_use_axi_qs;
-        reg_rdata_next[31] = control_unused_qs;
+        reg_rdata_next[1] = control_a2f_ctr_poweron_en_qs;
       end
 
       default: begin

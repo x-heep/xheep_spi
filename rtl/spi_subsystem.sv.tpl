@@ -18,20 +18,27 @@ module spi_subsystem
   import spi_host_reg_pkg::*;
 #(
     parameter int DataWidth = 64,
-	  parameter int AddrWidth = 64,
-    parameter logic ByteOrder = 1,  // 1 = little endian , 0 = big endian
+    parameter int AddrWidth = 64,
     parameter type reg_req_t = logic,
     parameter type reg_rsp_t = logic,
+% if base_peripheral_domain.contains_peripheral('axi_spi'):
     parameter type axi_req_t = logic,
     parameter type axi_resp_t = logic,
+% else:
+% endif
+% if base_peripheral_domain.contains_peripheral('obi_spi'):
     parameter type obi_req_t = logic,
-    parameter type obi_resp_t = logic
+    parameter type obi_resp_t = logic,
+% else:
+% endif
+    parameter logic ByteOrder = 1  // 1 = little endian , 0 = big endian
 
 )(
 
     input logic clk_i,
     input logic rst_ni,
 
+% if base_peripheral_domain.contains_peripheral('obi_spi'):
     // Select signal between spimemio and spi_host (YOSYS and OpenTitan)
     input logic use_spimemio_i,
 
@@ -42,10 +49,15 @@ module spi_subsystem
     // spimemio configuration interface (reg)
     input  reg_req_t  spimemio_reg_req_i,
     output reg_rsp_t  spimemio_reg_rsp_o,
+% else:
+% endif
 
+% if base_peripheral_domain.contains_peripheral('axi_spi'):
     // AXI interface
     input  axi_req_t  axi_req_i,
     output axi_resp_t axi_rsp_o,
+% else:
+% endif
 
     // spi_subsystem configuration interface (reg)
     input  reg_req_t  top_reg_req_i, 
@@ -55,16 +67,13 @@ module spi_subsystem
     input  reg_req_t  spihost_reg_req_i,
     output reg_rsp_t  spihost_reg_rsp_o,
 
+% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
     // w25q128jw flash controller configuration interface
     input  reg_req_t  w25_ctr_reg_req_i,
     output reg_rsp_t  w25_ctr_reg_rsp_o,
 
-## dma_reg_pkg is not in this repo, for simulation purposes it is required to remove this output
-% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
     // DMA hw controller register direct access
-    // output dma_reg_pkg::dma_hw2reg_t external_dma_hw2reg_o,
-% else:
-% endif
+    output dma_reg_pkg::dma_hw2reg_t external_dma_hw2reg_o,
 
     // flash controller interrupt
     output logic w25q128jw_controller_intr_o,
@@ -72,6 +81,8 @@ module spi_subsystem
     // DMA handshake
     input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_ready_i,
     input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i,
+% else:
+% endif
 
     // SPI Interface
     output logic                               spi_flash_sck_o,
@@ -107,11 +118,6 @@ module spi_subsystem
   logic                               ot_spi_tx_ready;
 
   spi_host_reg_pkg::spi_host_hw2reg_status_reg_t external_spi_host_hw2reg_status;
-
-  obi_resp_t obi_rsp_unused;
-  reg_rsp_t reg_rsp_unused;
-  assign reg_rsp_unused = '0;
-  assign obi_rsp_unused = '0;
 
 % if base_peripheral_domain.contains_peripheral('obi_spi'):
 
@@ -203,9 +209,6 @@ always_comb begin
   spi_flash_tx_ready_o = ot_spi_tx_ready;
 end
 
-  assign spimemio_obi_resp_o = obi_rsp_unused;
-  assign spimemio_reg_rsp_o = reg_rsp_unused;
-
 %endif
 
 % if base_peripheral_domain.contains_peripheral('axi_spi'):
@@ -230,6 +233,9 @@ end
       // Enable by xspi register
       .en_i(reg2hw.control.use_axi.q),
 
+      // Enable power-on subrutine
+      .poweron_en_i(reg2hw.control.a2f_ctr_poweron_en.q),
+
       // register interface to SPI controller
       .spi_host_reg_req_o(reg_req_from_a2f_ctr),
       .spi_host_reg_rsp_i(reg_rsp_to_a2f_ctr),
@@ -242,10 +248,7 @@ end
       .axi_rsp_o(axi_rsp_o)
   );
 
-% else:
-
-  assign axi_rsp_o = '0;
-  
+% else:  
 % endif
 
   reg_req_t muxed_controllers_reg_req;
@@ -288,10 +291,6 @@ end
   );
 
 % else:
-
-  assign w25_ctr_reg_rsp_o = '0;
-  assign w25q128jw_controller_intr_o = '0;
-
 % endif
 
 % if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
@@ -326,9 +325,9 @@ end
 
 % endif
 
-% else: ## no w25_ctr , axi
+% else: 
 
-% if base_peripheral_domain.contains_peripheral('axi_spi'):
+% if base_peripheral_domain.contains_peripheral('axi_spi'): ## no w25_ctr , axi
  
   assign muxed_controllers_reg_req = reg_req_from_a2f_ctr;
   assign reg_rsp_to_a2f_ctr = muxed_controllers_reg_rsp;
@@ -423,7 +422,7 @@ end
       .devmode_i(1'b1)
   );
 
-% if base_peripheral_domain.contains_peripheral('axi_spi'):
+% if base_peripheral_domain.contains_peripheral('w25q128jw_controller'):
 `ifndef SYNTHESIS
 
   always_ff @(posedge clk_i) begin : yosys_spi_write

@@ -16,31 +16,63 @@ W25Q_CFG := $(RTL_DIR)/$(W25Q_NAME)/data/$(W25Q_NAME).hjson
 W25Q_RTL_OUT := $(RTL_DIR)/$(W25Q_NAME)/rtl
 W25Q_SW_OUT := $(SW_DIR)/$(W25Q_NAME)
 
-# Generated outputs
+# spi_subsystem
+SPISUBSYS_NAME := spi_subsystem
+SPISUBSYS_CFG := data/$(SPISUBSYS_NAME).hjson
+SPISUBSYS_RTL_OUT := $(RTL_DIR)
+SPISUBSYS_SW_OUT := $(SW_DIR)/$(SPISUBSYS_NAME)
+
+# Generated outputs - # w25q128jw_controller
 W25Q_RTL_FILES := $(W25Q_RTL_OUT)/$(W25Q_NAME)_reg_pkg.sv $(W25Q_RTL_OUT)/$(W25Q_NAME)_reg_top.sv
 W25Q_SW_FILES := $(W25Q_SW_OUT)/$(W25Q_NAME)_regs.h
 W25Q_STRUCTS_FILE := $(W25Q_SW_OUT)/$(W25Q_NAME)_structs.h
 W25Q_DOC_FILE := $(W25Q_SW_OUT)/$(W25Q_NAME)_regs.md
 
+# Generated outputs - # spi_subsystem
+SPISUBSYS_RTL_FILES := $(SPISUBSYS_RTL_OUT)/$(SPISUBSYS_NAME)_reg_pkg.sv $(SPISUBSYS_RTL_OUT)/$(SPISUBSYS_NAME)_reg_top.sv
+SPISUBSYS_SW_FILES := $(SPISUBSYS_SW_OUT)/$(SPISUBSYS_NAME)_regs.h
+SPISUBSYS_STRUCTS_FILE := $(SPISUBSYS_SW_OUT)/$(SPISUBSYS_NAME)_structs.h
+SPISUBSYS_DOC_FILE := $(SPISUBSYS_SW_OUT)/$(SPISUBSYS_NAME)_regs.md
+
 .PHONY: reg
-reg: $(W25Q_RTL_FILES) $(W25Q_SW_FILES) $(W25Q_STRUCTS_FILE) $(W25Q_DOC_FILE)
-	@printf -- 'Generating $(W25Q_NAME) registers...\n'
+reg: $(W25Q_RTL_FILES) $(W25Q_SW_FILES) $(W25Q_STRUCTS_FILE) $(W25Q_DOC_FILE) \
+     $(SPISUBSYS_RTL_FILES) $(SPISUBSYS_SW_FILES) $(SPISUBSYS_STRUCTS_FILE) $(SPISUBSYS_DOC_FILE)
+	@echo "All registers for $(W25Q_NAME) and $(SPISUBSYS_NAME) are up to date."
 
 $(W25Q_RTL_FILES): $(W25Q_CFG)
+	@printf -- 'Generating $(W25Q_NAME) RTL...\n'
 	$(REGTOOL) -r -t $(W25Q_RTL_OUT) $<
 
 $(W25Q_SW_FILES): $(W25Q_CFG)
-	mkdir -p $(W25Q_SW_OUT)
+	@mkdir -p $(W25Q_SW_OUT)
 	$(REGTOOL) --cdefines -o $@ $<
 
 $(W25Q_STRUCTS_FILE): $(W25Q_CFG)
-	mkdir -p $(W25Q_SW_OUT)
+	@mkdir -p $(W25Q_SW_OUT)
 	python3 $(PERIPH_STRUCTS_GEN) --template_filename $(TEMPLATE_FILE) \
-	                              --hjson_filename $< \
-	                              --output_filename $@
+                                  --hjson_filename $< \
+                                  --output_filename $@
 
 $(W25Q_DOC_FILE): $(W25Q_CFG)
-	mkdir -p $(W25Q_SW_OUT)
+	@mkdir -p $(W25Q_SW_OUT)
+	$(REGTOOL) -d $< > $@
+
+$(SPISUBSYS_RTL_FILES): $(SPISUBSYS_CFG)
+	@printf -- 'Generating $(SPISUBSYS_NAME) RTL...\n'
+	$(REGTOOL) -r -t $(SPISUBSYS_RTL_OUT) $<
+
+$(SPISUBSYS_SW_FILES): $(SPISUBSYS_CFG)
+	@mkdir -p $(SPISUBSYS_SW_OUT)
+	$(REGTOOL) --cdefines -o $@ $<
+
+$(SPISUBSYS_STRUCTS_FILE): $(SPISUBSYS_CFG)
+	@mkdir -p $(SPISUBSYS_SW_OUT)
+	python3 $(PERIPH_STRUCTS_GEN) --template_filename $(TEMPLATE_FILE) \
+                                  --hjson_filename $< \
+                                  --output_filename $@
+
+$(SPISUBSYS_DOC_FILE): $(SPISUBSYS_CFG)
+	@mkdir -p $(SPISUBSYS_SW_OUT)
 	$(REGTOOL) -d $< > $@
 
 .PHONY: vendor
@@ -75,14 +107,9 @@ lib:
 	$(FUSESOC) library add xspi . || true
 	$(FUSESOC) library add vendors vendor || true
 
-## Generate spi_subsystem_top_reg.sv
-.PHONY: gen-reg
-gen-reg:
-	@$(RTL_DIR)/spi_subsystem.sh
-
 ## Generate spi_subsystem.sv
 .PHONY: gen-spi
-gen-spi: gen-reg
+gen-spi: reg
 	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv
 
 ## Clean files

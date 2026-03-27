@@ -16,6 +16,7 @@
   TODO : add some comments from original w25q128jw_controller ? Improve readability
   TODO : between first and second sector write of the single beat might not be required to FWAIT , maybe even between beats
   TODO : correct code to avioid WIDTH warnings, allowing waiver file reduction.
+  TODO : rxwm is set to one multiple times, 1 is enough?
 
   TODO : at last, remove verilator scope signals in tc_sram (and also spiflash)
 
@@ -66,6 +67,9 @@ module axi_to_flash_controller
 
   // Enable by xspi register
   input logic en_i,
+
+  // Enable power-on subrutine
+  input logic poweron_en_i,
 
   // Master ports to the SPI HOST
   output reg_req_t spi_host_reg_req_o,
@@ -213,6 +217,7 @@ module axi_to_flash_controller
   } axireq_state_e;
   // // POWER ON SFM state definition
   // Sends the power on command to the flash. Executed after AXIREQ if it hasn't been done before since reset.
+  // Rutine also needs to be enable by a input signal (register in spi_subsystem) in order to skip the pwoer-on cycles if by ipothesys the flash is already on
   typedef enum logic [sizeInBits(6)-1:0] {
     POWERON_IDLE,                 
     POWERON_SPI_CHECK_TX_FIFO,    // Check whether tx_fifo has room
@@ -554,8 +559,9 @@ int actual_poweron_wait_cycles;
             beat_size_d = 1 << ar_size;
             ar_ready = 1'b1;
             // Next state evaluation
-            if (~flash_is_on_q) begin
+            if (~flash_is_on_q && poweron_en_i) begin
               // if, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to issue the power-on command
+              // POWERON can be bypassed by keeping poweron_en_i low.
               axireq_state_d = AXIREQ_IDLE;
               top_state_d = TOP_POWERON;
             end
@@ -614,8 +620,9 @@ int actual_poweron_wait_cycles;
             end
             // Next state evaluation
             if ( w_valid && axi2fls_wr_ready && w_last ) begin
-              if (~flash_is_on_q) begin
-                // if, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to issue the power-on command
+              if (~flash_is_on_q && poweron_en_i) begin
+                // If, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to issue the power-on command
+                // POWERON can be bypassed by keeping poweron_en_i low.
                 axireq_state_d = AXIREQ_IDLE;
                 top_state_d = TOP_POWERON;
               end
@@ -1832,12 +1839,10 @@ int actual_poweron_wait_cycles;
                 r_data[i*8 +: 8] = axi2fls_rd_data[n*8 +: 8];
                 n++;
               end
-              if (beat_count_d == beat_number_q)  begin 
-                r_last = 1'b1;
-              end
               if (r_ready) begin
                 beat_count_d = beat_count_q + 1;
                 axi2fls_rd_ready = 1'b1;
+                r_last = (beat_count_d == beat_number_q) ? 1'b1 : 1'b0;
               end
             end
             // Next state evaluation
