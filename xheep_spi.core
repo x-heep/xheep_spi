@@ -11,7 +11,6 @@ filesets:
   files_rtl:
     depend:
       - pulp-platform.org::register_interface
-      - yosyshq:picorv32_spimemio:0-r1
       - lowrisc:ip:spi_host:1.0
       - pulp-platform.org::axi:0.29.1
     files:
@@ -27,8 +26,8 @@ filesets:
       - rtl/axi_to_flash_beat_queues.sv
       - rtl/axi_to_flash_controller.sv
       - rtl/spi_subsystem.sv
-      - sim/tc_sram.sv
-      - sim/sram_wrapper.sv
+      - tb/tc_sram.sv
+      - tb/sram_wrapper.sv
       - tb/yosys_spiflash.sv
     file_type: systemVerilogSource
 
@@ -36,7 +35,6 @@ filesets:
     files:
       # - lint/w25q128jw_controller.vlt
       - lint/spi_subsystem.vlt
-      - lint/obi_spimemio.vlt
     file_type: vlt
 
   files_verilator_tb:
