@@ -17,18 +17,11 @@
   TODO : between first and second sector write of the single beat might not be required to FWAIT , maybe even between beats
   TODO : correct code to avioid WIDTH warnings, allowing waiver file reduction.
   TODO : rxwm is set to one multiple times, 1 is enough?
+  TODO : write_skip still goes through the flash status read, bypass that too?
 
   TODO : at last, remove verilator scope signals in tc_sram (and also spiflash)
 
-  // CRITICAL //
-  TODO : why do we access registers @ SPI_HOST_COMMAND_OFFSET when we modify the rxwm rather than SPI_HOST_CONTROL_OFFSET ?
-  << CORRECTED >>
-
-  TODO : probably should use direct access to spi_host_hw2reg.status.rxwm rather than sampled with register interface
-  << CORRECTED >>
-
-  TODO : NO POWERUP ?!?!?!?!?!?
-  << FORCED AT 1 IN SPI_FLASH >>
+  TODO : can the sector READ performance iprove if instead of reading a word at a time we read N words where N is the maximum common denominator between sector size and rx_fifo size in 32b words?
 
   // MORE CHANGES //
   1) dual and quad spi support (thus dummy cycles) (register cfg + states)
@@ -351,6 +344,7 @@ module axi_to_flash_controller
   logic [DataWidth-1:0]              wr_queue_buffer_data_q , wr_queue_buffer_data_d;
   logic [DataBytes-1:0]              wr_queue_buffer_be_q   , wr_queue_buffer_be_d;  
   logic [1:0]                        fwait_cnt_q            , fwait_cnt_d;
+  logic                              skip_write_q           , skip_write_d;
   logic [PageCountDW-1:0]            page_count_q           , page_count_d;
   logic [SecBuffLatencyDW-1:0]       wait_latency_count_q   , wait_latency_count_d;
   logic [SectorBuffer_DataWidth-1:0] sec_buf_buffer_q       , sec_buf_buffer_d;
@@ -398,6 +392,7 @@ module axi_to_flash_controller
       wr_queue_buffer_data_q <= '0;
       wr_queue_buffer_be_q   <= '0;
       fwait_cnt_q            <= '0;
+      skip_write_q           <= '0;
       page_count_q           <= '0;
       wait_latency_count_q   <= '0;
       sec_buf_buffer_q       <= '0;
@@ -432,6 +427,7 @@ module axi_to_flash_controller
       wr_queue_buffer_data_q <= wr_queue_buffer_data_d;
       wr_queue_buffer_be_q   <= wr_queue_buffer_be_d;  
       fwait_cnt_q            <= fwait_cnt_d;
+      skip_write_q           <= skip_write_d;
       page_count_q           <= page_count_d;
       wait_latency_count_q   <= wait_latency_count_d;
       sec_buf_buffer_q       <= sec_buf_buffer_d;    
@@ -492,6 +488,7 @@ int actual_poweron_wait_cycles;
     wr_queue_buffer_data_d = wr_queue_buffer_data_q;
     wr_queue_buffer_be_d   = wr_queue_buffer_be_q; 
     fwait_cnt_d            = fwait_cnt_q;
+    skip_write_d           = skip_write_q;
     page_count_d           = page_count_q;
     wait_latency_count_d   = wait_latency_count_q;
     sec_buf_buffer_d       = sec_buf_buffer_q;
@@ -737,8 +734,11 @@ int actual_poweron_wait_cycles;
             end
             // skip_sector_read evaluation
             // We want to skip the sector storage into the sector buffer in case nothing would change from the previous beat
-            // Skip the sector read if we are writing and the sector base address sent to the flash would be the same
-            skip_sector_read = ((flash_addr_d == previous_flash_addr) && ~rnw_q) ? 1'b1 : 1'b0;
+            // Skip the sector read if :
+            // We are writing
+            // The sector base address sent to the flash would be the equal to the previous
+            // it is not the first beat
+            skip_sector_read = ((flash_addr_d == previous_flash_addr) && ~rnw_q && beat_count_q > 0 ) ? 1'b1 : 1'b0;
             // Next state evaluation
             if (skip_sector_read) begin
               read_state_d = READ_IDLE;
@@ -980,7 +980,7 @@ int actual_poweron_wait_cycles;
                 // addr_0 = ax_addr
                 // addr_0_alligned = INT(addr_0 / size) * size
                 // addr_N = addr_0_alligned + size*N
-                beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
+                beat_addr_d = ( (first_beat_addr_q / beat_size_q) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
                 flash_addr_d = beat_addr_d; // It is enstablished that we are reading
               end
             end
@@ -1133,14 +1133,12 @@ int actual_poweron_wait_cycles;
                     fwait_cnt_d   = 2'h1;
                     fwait_state_d = FWAIT_IDLE;
                     top_state_d   = TOP_ERASE;
-                    erase_state_d = ERASE_IDLE;
                   end
                   // After ERASE: Flash ready -> go to MODIFY
                   2'h1: begin
                     fwait_cnt_d = 2'h2;
                     fwait_state_d = FWAIT_IDLE;
                     top_state_d = TOP_MODIFY;
-                    modify_state_d = MODIFY_IDLE;
                   end
                   // After WRITE:
                   2'h2: begin
@@ -1148,12 +1146,13 @@ int actual_poweron_wait_cycles;
                       // There are still pages to program for the current sector
                       fwait_state_d = FWAIT_IDLE;
                       top_state_d   = TOP_WRITE;
-                      write_state_d = WRITE_IDLE;
                     end else begin
                       // Current sector write is complete
                       fwait_cnt_d = 2'h0;
                       // Reset page counter
                       page_count_d = 0;
+                      // Reset skip_write flag
+                      skip_write_d = 1'b0;
                       if (first_sector_write_q) begin
                         // If only the first sector out of two has been written, return to READ and do the second
                         second_sector_write_d = 1;
@@ -1161,6 +1160,9 @@ int actual_poweron_wait_cycles;
                         top_state_d = TOP_READ;
                       end else begin
                         // Current beat write is completed
+                        // Reset write sector indicator flags
+                        first_sector_write_d = 1'b0;
+                        second_sector_write_d = 1'b0;
                         beat_count_d = beat_count_q + 1;
                         if (beat_count_d < beat_number_q) begin
                           // There are more beats to go for this AXI transmission
@@ -1174,16 +1176,12 @@ int actual_poweron_wait_cycles;
                           addr_0_alligned = INT(addr_0 / size) * size
                           addr_N = addr_0_alligned + size*N
                           */
-                          beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
-                          
+                          beat_addr_d = ( (first_beat_addr_q / beat_size_q) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
+
                           fwait_state_d = FWAIT_IDLE;
                           top_state_d = TOP_READ;
                         end else begin
                           // AXI transmission is over
-                          // Reset some registers
-                          first_sector_write_d = 0;
-                          second_sector_write_d = 0;
-
                           top_state_d = TOP_AXIRESP;
                           fwait_state_d = FWAIT_IDLE;
                         end
@@ -1214,7 +1212,26 @@ int actual_poweron_wait_cycles;
       TOP_ERASE: begin
         case (erase_state_q)
           ERASE_IDLE: begin
-            erase_state_d = ERASE_WE_CHECK_TX_FIFO;
+            logic [AddrWidth-1:0] next_beat_addr, next_sect_addr, curr_sect_addr;
+            // In this state, before erasing we evaluate the possibility to postpone flash erase and program in the next beat if the sector involved would be the same
+            // As these operations are the performance bottlenecks and it is better to share them between more beat instances.
+            if (~first_sector_write_q && (beat_count_q < beat_number_q - 1)) begin
+              // This is done if :
+              // The current sector is not the first of two being written for the current signle beat (sector would change after)
+              // The current sector is not the last one (would be the last call to write)
+              // The next sector address would be the same as current
+              next_beat_addr = ( (first_beat_addr_q / beat_size_q) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
+              next_sect_addr = (next_beat_addr >> 12) << 12;
+              curr_sect_addr = (beat_addr_q >> 12) << 12;
+              skip_write_d = 1'b1; // This value is reset after each beat write or partial beat write
+            end
+            // Next state evaluation
+            if(skip_write_d) begin
+              erase_state_d = ERASE_IDLE;
+              top_state_d = TOP_FWAIT;
+            end else begin
+              erase_state_d = ERASE_WE_CHECK_TX_FIFO;
+            end
           end
           ERASE_WE_CHECK_TX_FIFO: begin
             // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
@@ -1626,7 +1643,15 @@ int actual_poweron_wait_cycles;
       TOP_WRITE: begin
         case (write_state_q)
           WRITE_IDLE: begin
-            write_state_d = WRITE_WE_CHECK_TX_FIFO;
+            // If we are skipping TOP_WRITE, then we assume that the sector does not have to be written by any more pages
+            if (skip_write_q) page_count_d = SE_PSIZE;
+            // Next state evaluation
+            if (skip_write_q) begin
+              write_state_d = WRITE_IDLE;
+              top_state_d = TOP_FWAIT;
+            end else begin
+              write_state_d = WRITE_WE_CHECK_TX_FIFO;
+            end
           end
           WRITE_WE_CHECK_TX_FIFO: begin
             // Proceed only if tx_fifo is not full, exploit direct access to spi_host status

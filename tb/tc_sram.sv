@@ -87,19 +87,19 @@ module tc_sram #(
   // hold the read address when no read access is made
   addr_t [NumPorts-1:0] r_addr_q;
 
-  // --- Aggiunta Segnali Settore ---
-  
-  // Dichiarazione: Array di 10 elementi di tipo data_t (128 bit di default)
+  // _-*-_-*-_-*-_-*-_-*-_-*-_ USER CODE _-*-_-*-_-*-_-*-_-*-_-*-_
+
   data_t [9:0] first_10_words_of_sector;
   data_t [9:0] last_10_words_of_sector;
 
-  // Assegnazione continua per riflettere sempre il contenuto della memoria
   always_comb begin
     for (int unsigned i = 0; i < 10; i++) begin
       first_10_words_of_sector[i] = sram[i];
       last_10_words_of_sector[i]  = sram[(NumWords - 1) - i];
     end
   end
+
+  // _-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_-*-_
 
   // SRAM simulation initialization
   data_t init_val[NumWords-1:0];

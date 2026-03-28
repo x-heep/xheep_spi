@@ -69,7 +69,7 @@
 // default values
 #define DEFAULT_AXI_NUM 5
 #define DEFAULT_AXI_SIZE 2
-#define DEFAULT_AXI_ADDR 0x00001006
+#define DEFAULT_AXI_ADDR 0x00021006
 
 // Global variables
 

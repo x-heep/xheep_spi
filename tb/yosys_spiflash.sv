@@ -133,13 +133,13 @@ module spiflash (
   
   initial begin
     for (int i = 0; i < 4096; i++) begin
-      memory[24'h001000 + i] = (8'hff - i[7:0]);
+      memory[24'h021000 + i] = (8'hff - i[7:0]);
     end
   end
 
 always_comb begin
   for (int i = 0; i < 16; i++) begin
-    storage[i] = memory[24'h001000 + i];
+    storage[i] = memory[24'h021000 + i];
   end
 end
 
