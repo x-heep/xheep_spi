@@ -129,7 +129,7 @@ module spiflash (
   
   logic [7:0] storage[16];
 
-  assign memory[0] = 8'b11101110;
+  assign memory[0] = 8'haa;
   
   initial begin
     for (int i = 0; i < 4096; i++) begin

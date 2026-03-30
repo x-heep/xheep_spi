@@ -1,5 +1,5 @@
 package core_v_mini_mcu_pkg;
-    localparam Parallelism = 64;
+    localparam Parallelism = 32+32*1;
 
     localparam int DMA_CH_NUM = 4;
     

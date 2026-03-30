@@ -69,7 +69,7 @@
 // default values
 #define DEFAULT_AXI_NUM 5
 #define DEFAULT_AXI_SIZE 2
-#define DEFAULT_AXI_ADDR 0x00021006
+#define DEFAULT_AXI_ADDR 0x021006
 
 // Global variables
 
@@ -88,6 +88,8 @@ const uint64_t DEFAULT_AXI_WDATA_32[DEFAULT_AXI_NUM] = {
     0x000000000000CDEF,
     0x0000000011110000
 };
+
+// Options usage example: make clean-sim TB_ARGS="--num_beats 3 --size_beat 4 --addr 0x021004 --random_data true"
 
 // ================================ FUNCTION PROTOTYPES ================================
 

@@ -12,6 +12,8 @@
  
   Based on XHEEP's w25q128jw_controller.sv
 
+  DATASHEET : https://www.mouser.com/datasheet/2/949/W25Q128JW_RevB_11042019-1761358.pdf?srsltid=AfmBOopmMreOM8jLZ_O6yIwuR8ep6A4olsQW1t1oNTz8bvuKFsv5xtqs
+
   TODO : add more blank space in the FSM
   TODO : add some comments from original w25q128jw_controller ? Improve readability
   TODO : between first and second sector write of the single beat might not be required to FWAIT , maybe even between beats
@@ -39,10 +41,10 @@ module axi_to_flash_controller
   localparam int PageCountDW = sizeInBits(SE_PSIZE+1),
   localparam int SectorBufferLatency = 1,
   localparam int SecBuffLatencyDW = sizeInBits(SectorBufferLatency+1),
-  localparam int ClockFrequencyMAX_kHz = 1e6,
-  localparam int w25q128jw_tPUW_ms = 5, // 5ms , from datasheet
-  localparam int PowerOnWaitCycles = ClockFrequencyMAX_kHz * w25q128jw_tPUW_ms,
-  localparam int PoweronWaitCycles_SIM = 10,
+  localparam int ClockFrequencyMAX_MHz = 1e3,
+  localparam int w25q128jw_tRES1_us = 30, // from datasheet p. 64
+  localparam int PowerOnWaitCycles = ClockFrequencyMAX_MHz * w25q128jw_tRES1_us,
+  localparam int PoweronWaitCycles_SIM = 300,
   localparam int PowerOnWaitCyclesDW = sizeInBits(PowerOnWaitCycles+1),
   parameter logic ByteOrder = 1, // 1 == Little Endian , 0 == Big Endian  ; @ 0 , beat_queues swap bytes.
   parameter int AddrWidth = 64,
@@ -676,7 +678,7 @@ int actual_poweron_wait_cycles;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             spi_host_reg_req_o.wdata = {
-              3'h0, 2'h2, 2'h0, 1'h1, 24'h0
+              3'h0, 2'h2, 2'h0, 1'h0, 24'h0
             };  // Empty + Direction + Speed + Csaat + Length
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
@@ -1222,7 +1224,7 @@ int actual_poweron_wait_cycles;
               // The next sector address would be the same as current
               next_beat_addr = ( (first_beat_addr_q / beat_size_q) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
               next_sect_addr = (next_beat_addr >> 12) << 12;
-              curr_sect_addr = (beat_addr_q >> 12) << 12;
+              curr_sect_addr = '0 | flash_addr_q;   // flash_addr_q in write is the current sector address, set in TOP_READ
               skip_write_d = 1'b1; // This value is reset after each beat write or partial beat write
             end
             // Next state evaluation
