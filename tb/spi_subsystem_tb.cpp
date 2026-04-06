@@ -22,9 +22,19 @@
 
 // AXI datasize
 
-/* _-|-__-|-__-|-__-|-__-|-_ CHANGE PARALLELISM HERE _-|-__-|-__-|-__-|-__-|-_ */
+/* _-|-__-|-__-|-__-|-__-|-_ MODIFIABLE VALUES  _-|-__-|-__-|-__-|-__-|-_ */
 
+// change axi datasize according to parallelism : 0 = 32bit , 1 = 64bit
 #define AXI_DATA_SIZE_IS_64_n32 1
+
+#define CHEK_ENABLE 0
+/*
+    Enable the testbench execute a comparison between written data and read data.
+    Works only if:
+    - Data is alligned
+    - w.strb is just ones
+    - data is not random (because random data doesn't take into account byte lane rotation)
+*/
 
 /* _-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-__-|-_  */
 
@@ -69,7 +79,7 @@
 // default values
 #define DEFAULT_AXI_NUM 5
 #define DEFAULT_AXI_SIZE 2
-#define DEFAULT_AXI_ADDR 0x021006
+#define DEFAULT_AXI_ADDR 0x021fff
 
 // Global variables
 
@@ -85,9 +95,13 @@ const uint64_t DEFAULT_AXI_WDATA_32[DEFAULT_AXI_NUM] = {
     0x0000000032100000,
     0x0000000000007654,
     0x00000000BA980000,
-    0x000000000000CDEF,
+    0x000000000000FEDC,
     0x0000000011110000
 };
+
+// write strobe signal in the axi write channel
+#define AXI_WSTRB_64 0xFF
+#define AXI_WSTRB_32 0x0F
 
 // Options usage example: make clean-sim TB_ARGS="--num_beats 3 --size_beat 4 --addr 0x021004 --random_data true"
 
@@ -627,7 +641,7 @@ int main(int argc, char *argv[]){
 
 // --- Data Comparison Section ---
 // Random data doesn't work with data check because active byte lane rotation is not implemented with random data
-    if(!random){
+    if(CHEK_ENABLE){
         std::cout << std::endl << BLUE << BOLD << "========================================" << RESET << std::endl;
         std::cout << BOLD << "          DATA INTEGRITY CHECK" << RESET << std::endl;
         std::cout << BLUE << BOLD << "========================================" << RESET << std::endl;
@@ -774,7 +788,7 @@ void genAxiManagerAW(Vspi_subsystem_tb_wrapper* dut, uint64_t addr, uint64_t num
 void genAxiManagerW(Vspi_subsystem_tb_wrapper* dut, uint64_t wdata){
     
     dut->w_data_i =  AXI_DATA_SIZE_IS_64_n32 ? wdata : (0x00000000FFFFFFFF & wdata);
-    dut->w_strb_i  = AXI_DATA_SIZE_IS_64_n32 ? 0xFF : 0x0F;
+    dut->w_strb_i  = AXI_DATA_SIZE_IS_64_n32 ? AXI_WSTRB_64 : AXI_WSTRB_32;
     dut->w_valid_i = 1;
 
 }

@@ -49,7 +49,7 @@ lint_off -rule WIDTH -file "*rtl/spi_host_reg_top.sv*" -match "*Operator ASSIGNW
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 5 bits on the Assign RHS, but Assign RHS's ADD generates 32 or 8 bits*"
 
 // logic [AddrWidth-1:0] alligned_beat_addr = (first_beat_addr_q / beat_size_q) * beat_size_q;
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator DIV expects 64 bits on the RHS, but RHS's VARREF 'beat_size_q' generates 8 bits*"
+// lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator DIV expects 64 bits on the RHS, but RHS's VARREF 'beat_size_q' generates 8 bits*"
 
 // lower_byte_lane = first_beat_addr_q - (first_beat_addr_q / DataBytes)*DataBytes;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's SUB generates 64 bits*"
@@ -62,26 +62,17 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASS
 // upper_byte_lane = lower_byte_lane + (beat_size_q - 1);
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator SUB expects 32 bits on the LHS, but LHS's VARREF 'beat_size_q' generates 8 bits*"
 
-// sector_addr_of_last_byte =  ((beat_addr_q + beat_size_q) >> 12) << 12;
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'beat_size_q' generates 8 bits*"
-
 //if (word_count_d == SE_WSIZE) begin
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 11 bits*"
 
 // sect_buffer_addr = '0 + word_count_q;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'word_count_q' generates 11 bits*"
 
-// if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error && word_count_d == SE_WSIZE) begin
+// if (word_count_d == SE_WSIZE) begin
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 10 bits*"
-
-// rd_queue_buffer_d = bitfield_byteswap32(spi_host_reg_rsp_i.rdata);
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 64 bits on the Assign RHS, but Assign RHS's FUNCREF 'bitfield_byteswap32' generates 32 bits*"
 
 // flash_addr_d = beat_addr_d;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 24 bits on the Assign RHS, but Assign RHS's VARREF 'beat_addr_d' generates 64 bits*"
-
-// sect_buffer_addr = '0 + page_count_q + word_count_q;
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the RHS, but RHS's VARREF 'page_count_q' generates 5 bits*"
 
 // if (wait_latency_count_d == SectorBufferLatency) begin
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'wait_latency_count_d' generates 1 bits*"
@@ -92,10 +83,7 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT 
 // if (word_count_d <  PAGE_WSIZE) write_state_d = WRITE_PP_PAGE_WRITE_1;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT expects 13 bits on the LHS, but LHS's VARREF 'word_count_d' generates 10 bits*"
 
-// if ( page_count_q == NumPagesInSector ) begin
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'page_count_q' generates 5 bits*"
-
-// if ( page_count_q < NumPagesInSector ) begin
+// if (page_count_q < SE_PSIZE) begin
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator LT expects 32 bits on the LHS, but LHS's VARREF 'page_count_q' generates 5 bits*"
 
 // localparam int SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));
@@ -104,15 +92,11 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD
 // localparam int SectorBuffer_AddrWidth = sizeInBits(SE_WSIZE);
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator FUNCREF 'sizeInBits' expects 32 bits on the Function Argument, but Function Argument's VARREF 'SE_WSIZE' generates 13 bits*"
 
-// ({8'h0 , flash_addr_q} & 32'h00fff000) |
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator AND expects 33 bits on the LHS, but LHS's REPLICATE generates 32 bits*"
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator AND expects 33 bits on the RHS, but RHS's CONST '32'hfff000' generates 32 bits*"
-
 // spi_host_reg_req_o.wdata = bitfield_byteswap32(
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator FUNCREF 'bitfield_byteswap32' expects 32 bits on the Function Argument, but Function Argument's OR generates 33 bits*"
 
 // flash_is_on_d = (poweron_wait_count_d == actual_poweron_wait_cycles) ? 1'b1 : 1'b0;
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'poweron_wait_count_d' generates 23 bits*"
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'poweron_wait_count_d' generates*"
 
 // rd_queue_buffer_d = spi_host_reg_rsp_i.rdata
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 64 bits on the Assign RHS, but Assign RHS's SEL generates 32 bits*"
@@ -120,9 +104,14 @@ lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASS
 // beat_addr_d = ((first_beat_addr_q / beat_size_q ) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
 lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ADD expects 64 bits on the LHS, but LHS's VARREF 'beat_count_q' generates 5 bits*"
 
-// if (wait_latency_count_q == SectorBufferLatency) begin
-lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator EQ expects 32 bits on the LHS, but LHS's VARREF 'wait_latency_count_q' generates 1 bits*"
+// curr_sect_addr = '0 | flash_addr_q
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator OR expects 64 bits on the RHS, but RHS's VARREF 'flash_addr_q' generates 24 bits*" 
 
+// if (skip_write_q) page_count_d = SE_PSIZE
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 5 bits on the Assign RHS, but Assign RHS's VARREF 'SE_PSIZE' generates 32 bits*"
+
+// logic sector_address_of_beat = (beat_addr_q >> 12) << 12;
+lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "*Operator ASSIGN expects 1 bits on the Assign RHS, but Assign RHS's SHIFTL generates 64 bits*"
 
 // lint_off -rule WIDTH -file "*rtl/axi_to_flash_controller*" -match "**"
 

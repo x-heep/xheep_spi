@@ -127,21 +127,29 @@ module spiflash (
 
   // _-*-_-*-_-*-_-*-_-*-_-*-_ USER CODE _-*-_-*-_-*-_-*-_-*-_-*-_
   
-  logic [7:0] storage[16];
+  logic [7:0] first_sector_first8[8];
+  logic [7:0] first_sector_last8[8];
+  logic [7:0] second_sector_first8[8];
+  logic [7:0] second_sector_last8[8];
+
 
   assign memory[0] = 8'haa;
   
   initial begin
     for (int i = 0; i < 4096; i++) begin
-      memory[24'h021000 + i] = (8'hff - i[7:0]);
+      memory[24'h021000 + i] = i[7:0];
+      memory[24'h022000 + i] = 8'hff - i[7:0];
     end
   end
 
-always_comb begin
-  for (int i = 0; i < 16; i++) begin
-    storage[i] = memory[24'h021000 + i];
+  always_comb begin
+    for (int i = 0; i < 8; i++) begin
+      first_sector_first8[i] = memory[24'h021000 + i];
+      first_sector_last8[i] = memory[24'h021ff8 + i];
+      second_sector_first8[i] = memory[24'h022000 + i];
+      second_sector_last8[i] = memory[24'h022ff8 + i];
+    end
   end
-end
 
   // powered_up = 1; // temporarily fixed to 1, later implement rutine to manualy set this
   // otherwise spi_address fixed to 0

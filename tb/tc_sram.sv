@@ -95,7 +95,7 @@ module tc_sram #(
   always_comb begin
     for (int unsigned i = 0; i < 10; i++) begin
       first_10_words_of_sector[i] = sram[i];
-      last_10_words_of_sector[i]  = sram[(NumWords - 1) - i];
+      last_10_words_of_sector[i]  = sram[(NumWords - 10) + i];
     end
   end
 
