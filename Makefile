@@ -1,4 +1,4 @@
-REGTOOL ?= vendor/pulp_platform/register_interface/vendor/lowrisc_opentitan/util/regtool.py
+REGTOOL ?= vendor/pulp_platform_register_interface/vendor/lowrisc_opentitan/util/regtool.py
 PERIPH_STRUCTS_GEN ?= util/periph_structs_gen/periph_structs_gen.py
 TEMPLATE_FILE ?= util/periph_structs_gen/periph_structs.tpl
 
@@ -108,7 +108,7 @@ lib:
 ## Generate spi_subsystem.sv
 .PHONY: gen-spi
 gen-spi: reg
-	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv
+	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv axi
 
 ## Clean files
 .PHONY: clean
