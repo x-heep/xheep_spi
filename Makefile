@@ -10,6 +10,8 @@ CORE_NAME := x-heep:ip:spi
 
 TB_ARGS ?= --random_data false
 
+SPI_SUBSYS_PERIPH_GEN ?= axi
+
 # w25q128jw_controller
 W25Q_NAME := w25q128jw_controller
 W25Q_CFG := $(RTL_DIR)/$(W25Q_NAME)/data/$(W25Q_NAME).hjson
@@ -108,7 +110,7 @@ lib:
 ## Generate spi_subsystem.sv
 .PHONY: gen-spi
 gen-spi: reg
-	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv axi
+	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv $(SPI_SUBSYS_PERIPH_GEN)
 
 ## Clean files
 .PHONY: clean
