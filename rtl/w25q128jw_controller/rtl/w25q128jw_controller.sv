@@ -446,8 +446,8 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             if (reg2hw.control.rnw.q) begin
-              // READ: Use exact flash address from F_ADDRESS register
-              flash_address = reg2hw.f_address.q & 32'h00ffffff;
+              // READ: Use word-aligned flash address from F_ADDRESS register
+              flash_address = reg2hw.f_address.q & 32'h00fffffc;
               spi_host_reg_req_o.wdata = (((bitfield_byteswap32(flash_address)) >> 8) << 8) |
                   {19'h0, FC_RD};
             end else begin
@@ -504,9 +504,10 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             if (reg2hw.control.rnw.q) begin
-              // READ: receive user-specified number of bytes
+              // READ: receive user-specified number of bytes (round up to next word if not divisible by 4)
               spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0,
+                               ((reg2hw.length.q + 32'h3) & 32'hfffffffc) - 1'h1);
             end else begin
               // WRITE: read full sector (4096 bytes)
               spi_host_reg_req_o.wdata =
@@ -556,8 +557,8 @@ module w25q128jw_controller
             spi_host_reg_req_o.valid = 1'b1;
 
             if (reg2hw.control.rnw.q) begin
-              // READ: Use exact flash address from F_ADDRESS register
-              flash_address = reg2hw.f_address.q & 32'h00ffffff;
+              // READ: Use word-aligned flash address from F_ADDRESS register
+              flash_address = reg2hw.f_address.q & 32'h00fffffc;
             end else begin
               // WRITE: Use sector-aligned address + current sector iteration offset
               flash_address = (reg2hw.f_address.q & 32'h00fff000) + sector_iter_offset_q;
@@ -613,8 +614,10 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             if (reg2hw.control.rnw.q) begin
+              // READ: receive user-specified number of bytes (round up to next word if not divisible by 4)
               spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0,
+                               ((reg2hw.length.q + 32'h3) & 32'hfffffffc) - 1'h1);
             end else begin
               // WRITE: read full sector
               spi_host_reg_req_o.wdata =
