@@ -12,7 +12,7 @@ filesets:
     depend:
       - pulp-platform.org::register_interface
       - lowrisc:ip:spi_host:1.0
-      - pulp-platform.org::axi:0.29.1
+      - pulp-platform.org::axi
     files:
       - rtl/obi_pkg.sv
       - rtl/reg_pkg.sv
