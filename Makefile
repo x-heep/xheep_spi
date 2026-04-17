@@ -107,9 +107,13 @@ lib:
 	$(FUSESOC) library add xspi . || true
 	$(FUSESOC) library add vendors vendor || true
 
+## Generate spi_subsystem.sv and spi_subsystem_top_reg.sv
+.PHONY: spi-gen
+spi-gen: reg periph-gen
+
 ## Generate spi_subsystem.sv
-.PHONY: gen-spi
-gen-spi: reg
+.PHONY: periph-gen
+periph-gen:
 	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv $(SPI_SUBSYS_PERIPH_GEN)
 
 ## Clean files
