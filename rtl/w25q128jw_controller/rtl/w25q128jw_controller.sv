@@ -100,6 +100,46 @@ module w25q128jw_controller
   endfunction
   // verilog_format: on
 
+  function automatic void set_dma_regs(
+      input logic [31:0] src_ptr,
+      input logic [31:0] dst_ptr,
+      input logic [31:0] ptr_inc,
+      input logic [1:0] data_type,
+      input logic [15:0] size_d1
+  );
+    // Set DMA source pointer
+    external_dma_hw2reg_o.src_ptr.de = 1'b1;
+    external_dma_hw2reg_o.src_ptr.d = src_ptr;
+    // Set DMA destination pointer
+    external_dma_hw2reg_o.dst_ptr.de = 1'b1;
+    external_dma_hw2reg_o.dst_ptr.d = dst_ptr;
+    // Set source increment
+    external_dma_hw2reg_o.src_ptr_inc_d1.de = 1'b1;
+    external_dma_hw2reg_o.src_ptr_inc_d1.d  = ptr_inc;
+    // Set destination increment
+    external_dma_hw2reg_o.dst_ptr_inc_d1.de = 1'b1;
+    external_dma_hw2reg_o.dst_ptr_inc_d1.d  = ptr_inc;
+    // Set source data type (See hw/vendor/xheep_dma/data/dma.hjson for encoding)
+    external_dma_hw2reg_o.src_data_type.de = 1'b1;
+    external_dma_hw2reg_o.src_data_type.d = data_type;
+    // Set destination data type: 1 byte
+    external_dma_hw2reg_o.dst_data_type.de = 1'b1;
+    external_dma_hw2reg_o.dst_data_type.d = data_type;
+    // Set DMA trigger slots (See sw/device/lib/drivers/dma/dma.h for trigger slot mapping)
+    external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
+    external_dma_hw2reg_o.slot.rx_trigger_slot.d = '0;
+    external_dma_hw2reg_o.slot.tx_trigger_slot.de = 1'b1;
+    external_dma_hw2reg_o.slot.tx_trigger_slot.d = '0;
+    // Set slot wait counter
+    external_dma_hw2reg_o.slot_wait_counter.de = 1'b1;
+    external_dma_hw2reg_o.slot_wait_counter.d = '0;
+
+    // Set transfer size and START DMA
+    // Writing to SIZE_D1 register triggers DMA transaction (See hw/ip/dma/data/dma.hjson)
+    external_dma_hw2reg_o.size_d1.de = 1'b1;
+    external_dma_hw2reg_o.size_d1.d = size_d1;
+  endfunction
+
   // ============================================================================
   // W25Q128JW CONTROLLER FSM
   // ============================================================================
@@ -192,10 +232,18 @@ module w25q128jw_controller
   // -------- MODIFY FSM STATES --------
   // Copies new data into the sector buffer (RAM) at the correct offset
   // Uses DMA to transfer from ram_new_data to ram_buffer
-  typedef enum logic [1:0] {
+  typedef enum logic [2:0] {
     MODIFY_IDLE,  // Leads to DMA initialization
-    MODIFY_DMA_REGS, // Set the DMA registers (ram_new_data + offset (which sector we are now looking to write into + F_ADDRESS sector misalignment))
-    MODIFY_TRANS  // Wait for DMA transfer complete and update offsets + remaining length to write
+
+    // Set the DMA registers (ram_new_data + offset (which sector we are now looking to write into + F_ADDRESS sector misalignment))
+    MODIFY_HEAD_REGS, 
+    MODIFY_BODY_REGS,
+    MODIFY_TAIL_REGS,
+
+    // Wait for DMA transfer complete and update offsets + remaining length to write
+    MODIFY_HEAD_TRANS,
+    MODIFY_BODY_TRANS,
+    MODIFY_TAIL_TRANS
   } modify_state_e;
 
   // -------- WRITE FSM STATES --------
@@ -257,8 +305,14 @@ module w25q128jw_controller
 
   // Counter and Offset signals
   logic [3:0] page_cnt_q, page_cnt_d;
-  logic [31:0] sector_offset, sector_iter_offset_d, sector_iter_offset_q, md_offset_d, md_offset_q;
+  logic [11:0] sector_offset_q, sector_offset_d;
+  logic [12:0] sector_written_bytes_q, sector_written_bytes_d;
+  logic [31:0] sector_iter_offset_d, sector_iter_offset_q, md_offset_d, md_offset_q;
   logic [31:0] spi_control_q, spi_control_d;
+
+  // For FLASH -> SRAM and SRAM -> SRAM transfers, when the transfer doesn't start/end at a word (4B)
+  // boundary, we keep the number of bytes in the head and tail of the transfer
+  logic [1:0] head_bytes_q, head_bytes_d, tail_bytes_q, tail_bytes_d;
 
   logic [31:0] dma_size;
   logic [31:0] flash_address;
@@ -279,9 +333,13 @@ module w25q128jw_controller
       // -------- Reset: Clear counters and offsets --------
       fwait_return_q   <= FWAIT_RETURN_IDLE;
       page_cnt_q    <= 4'b0;
+      sector_offset_q <= 12'h0;
+      sector_written_bytes_q <= 13'h0;
       sector_iter_offset_q <= 32'h0;
       md_offset_q <= 32'h0;
       spi_control_q <= 32'h0;
+      head_bytes_q <= 2'h0;
+      tail_bytes_q <= 2'h0;
     end else begin
       dma_init_state_q <= dma_init_state_d;
       dma_init_return_q <= dma_init_return_d;
@@ -293,9 +351,13 @@ module w25q128jw_controller
       write_state_q <= write_state_d;
       fwait_return_q <= fwait_return_d;
       page_cnt_q    <= page_cnt_d;
+      sector_offset_q <= sector_offset_d;
+      sector_written_bytes_q <= sector_written_bytes_d;
       sector_iter_offset_q <= sector_iter_offset_d;
       md_offset_q <= md_offset_d;
       spi_control_q <= spi_control_d;
+      head_bytes_q <= head_bytes_d;
+      tail_bytes_q <= tail_bytes_d;
     end
   end
 
@@ -315,11 +377,11 @@ module w25q128jw_controller
     write_state_d = write_state_q;
     fwait_return_d = fwait_return_q;
     page_cnt_d = page_cnt_q;
+    sector_offset_d = sector_offset_q;
+    sector_written_bytes_d = sector_written_bytes_q;
     sector_iter_offset_d = sector_iter_offset_q;
     md_offset_d = md_offset_q;
     spi_control_d = spi_control_q;
-
-    sector_offset = 32'h0;
 
     hw2reg.control.start.de = 1'b0;
     hw2reg.control.start.d = 1'b0;
@@ -983,88 +1045,151 @@ module w25q128jw_controller
       // with the remaining bytes (if any).
       // ============================================================================
       TOP_MODIFY: begin
-
-        // -------- Compute sector offset --------
-        if (sector_iter_offset_q == 0) begin
-          sector_offset = reg2hw.f_address.q & 32'h00000fff;  // Offset within sector for first iteration
-        end else begin
-          sector_offset = 32'h0;  // Begin from start of sector for next iterations
-        end
-
         case (modify_state_q)
           // -------- IDLE: Trigger DMA initialization --------
           MODIFY_IDLE: begin
+            // Compute sector offset
+            if (sector_iter_offset_q == 0) begin
+              sector_offset_d = reg2hw.f_address.q[11:0]; // Offset within sector for first iteration
+            end else begin
+              sector_offset_d = 12'h0; // Begin from start of sector for next iterations
+            end
+
+            // Count number of bytes already written in this sector
+            sector_written_bytes_d = 13'h0;
+
+            // Number of bytes to copy 1 by 1 before & after word-aligned transfer
+            head_bytes_d = 2'h0 - sector_offset_d[1:0];
+            if (reg2hw.length.q < {30'h0, head_bytes_d}) begin
+              head_bytes_d = reg2hw.length.q[1:0];
+            end
+
+            tail_bytes_d = sector_offset_d[1:0] + reg2hw.length.q[1:0];
+
             top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
-            dma_init_return_d = RETURN_MODIFY;  // Return here after DMA init
-            modify_state_d    = MODIFY_DMA_REGS;  // Next state after returning from DMA init
+            dma_init_return_d = RETURN_MODIFY; // Return here after DMA init
+
+            // Next state after returning from DMA init
+            if (head_bytes_d != 0) begin
+              modify_state_d = MODIFY_HEAD_REGS;
+            end else begin
+              modify_state_d = MODIFY_BODY_REGS;
+            end
           end
 
-          // ============== DMA CONFIGURATION ==============
-          MODIFY_DMA_REGS: begin
-            modify_state_d = MODIFY_TRANS;
-            //Set DMA source pointer: RAM new data buffer (at MD_ADDRESS)
-            external_dma_hw2reg_o.src_ptr.de = 1'b1;
-            // Source = MD_ADDRESS + offset for current sector iteration (for multi-sector writes)
-            // F_ADDRESS not necessarily sector aligned and such case must be taken into consideration
-            external_dma_hw2reg_o.src_ptr.d = reg2hw.md_address.q + md_offset_q;
-            //Set DMA destination pointer: RAM sector buffer
-            external_dma_hw2reg_o.dst_ptr.de = 1'b1;
-            external_dma_hw2reg_o.dst_ptr.d = reg2hw.s_address.q + sector_offset;
-            // Destination = S_ADDRESS + offset within sector (for first iteration only, otherwise sector_offset = 0)
-            // F_ADDRESS not necessarily sector aligned and such case must be taken into consideration
-            //Set source increment: +4 bytes per word
-            external_dma_hw2reg_o.src_ptr_inc_d1.de = 1'b1;
-            external_dma_hw2reg_o.src_ptr_inc_d1.d  = 'h4;  // Increment by 4 bytes (32-bit word) in RAM
-            //Set destination increment: +4 bytes per word
-            external_dma_hw2reg_o.dst_ptr_inc_d1.de = 1'b1;
-            external_dma_hw2reg_o.dst_ptr_inc_d1.d  = 'h4;  // Increment by 4 bytes (32-bit word) in RAM
-            //Set source data type: 32-bit word (See hw/ip/dma/data/dma.hjson for data type encoding)
-            external_dma_hw2reg_o.src_data_type.de = 1'b1;
-            external_dma_hw2reg_o.src_data_type.d = '0;  // 0 = 32-bit word
-            //Set destination data type: 32-bit word
-            external_dma_hw2reg_o.dst_data_type.de = 1'b1;
-            external_dma_hw2reg_o.dst_data_type.d = '0;  // 0 = 32-bit word
-            //Set DMA trigger slots (See sw/device/lib/drivers/dma/dma.h for trigger slot mapping)
-            external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
-            external_dma_hw2reg_o.slot.rx_trigger_slot.d = '0;
-            external_dma_hw2reg_o.slot.tx_trigger_slot.de = 1'b1;
-            external_dma_hw2reg_o.slot.tx_trigger_slot.d = '0;
-            //Set slot wait counter
-            external_dma_hw2reg_o.slot_wait_counter.de = 1'b1;
-            external_dma_hw2reg_o.slot_wait_counter.d = '0;
+          // ============== DMA CONFIGURATION (HEAD) ==============
+          MODIFY_HEAD_REGS: begin
+            // If head copy reaches sector end (or consumes all remaining bytes),
+            // there is no body transfer in this sector
+            if ((reg2hw.length.q <= {30'h0, head_bytes_q}) ||
+                (({20'h0, sector_offset_q} + {30'h0, head_bytes_q}) == {19'h0, SE_BSIZE})) begin
+              modify_state_d = MODIFY_TAIL_TRANS;
+            end else begin
+              modify_state_d = MODIFY_HEAD_TRANS;
+            end
 
-            //Set transfer size and START DMA
-            external_dma_hw2reg_o.size_d1.de = 1'b1;
-            // Writing to SIZE_D1 register triggers DMA transaction (See hw/ip/dma/data/dma.hjson)
+            set_dma_regs(
+                reg2hw.md_address.q + md_offset_q,
+                reg2hw.s_address.q + {20'h0, sector_offset_q},
+                32'h1, // 1-byte transfer
+                2'h2,  // Data type: 2 = 8-bit
+                {14'h0, head_bytes_q}
+            );
+
+            sector_written_bytes_d = sector_written_bytes_q + {11'h0, head_bytes_q};
+          end
+
+          // ============== WAIT FOR DMA COMPLETION (HEAD) ==============
+          MODIFY_HEAD_TRANS: begin
+            if (dma_done_i[0]) begin
+              md_offset_d = md_offset_q + {30'h0, head_bytes_q};
+              sector_offset_d = sector_offset_q + {10'h0, head_bytes_q};
+              
+              top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
+              dma_init_return_d = RETURN_MODIFY; // Return here after DMA init
+              modify_state_d = MODIFY_BODY_REGS; // Next state after returning from DMA init
+            end
+          end
+
+          // ============== DMA CONFIGURATION (BODY) ==============
+          MODIFY_BODY_REGS: begin
             // Compute how many words to transfer for this sector
-            if (reg2hw.length.q < {19'h0, SE_BSIZE} - sector_offset) begin
+            if (reg2hw.length.q - head_bytes_q < {19'h0, SE_BSIZE} - {20'h0, sector_offset_q}) begin
               // Case 1: All remaining data fits in this sector
-              if (reg2hw.length.q[1:0] == 0) begin
-                dma_size = reg2hw.length.q >> 2;  // Exact word count
-              end else begin
-                dma_size = (reg2hw.length.q >> 2) + 1;  // Round up to next word
-              end
+              dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
+
+              modify_state_d = MODIFY_BODY_TRANS;
             end else begin
               // Case 2: Data spans multiple sectors. Fill remaining sector space
               // Transfer (4KB - offset) bytes
-              dma_size = (({19'h0, SE_BSIZE} - sector_offset) >> 2);
+              dma_size = (({19'h0, SE_BSIZE} - {20'h0, sector_offset_q}) >> 2);
+
+              modify_state_d = MODIFY_TAIL_TRANS;
             end
-            external_dma_hw2reg_o.size_d1.d = dma_size[15:0];
+
+            if (dma_size == 0) begin
+              // No body to transfer, skip to tail
+              modify_state_d = MODIFY_TAIL_REGS;
+            end else begin
+              set_dma_regs(
+                  reg2hw.md_address.q + md_offset_q,
+                  reg2hw.s_address.q + {20'h0, sector_offset_q},
+                  32'h4,  // 4-byte increment for word transfers
+                  2'h0,   // Data type: 0 = 32-bit
+                  dma_size[15:0]
+              );
+
+              sector_written_bytes_d = sector_written_bytes_q + {dma_size[10:0], 2'b00};
+            end
           end
 
-          // ============== WAIT FOR DMA COMPLETION ==============
-          MODIFY_TRANS: begin
+          // ============== WAIT FOR DMA COMPLETION (BODY) ==============
+          MODIFY_BODY_TRANS: begin
+            if (dma_done_i[0]) begin  // DMA channel 0 done signal
+              if (tail_bytes_q != 2'h0) begin
+                // More bytes remain after word-aligned transfer: configure DMA for tail bytes
+                md_offset_d = md_offset_q + (dma_size << 2);
+                sector_offset_d = sector_offset_q + (dma_size << 2);
+
+                top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
+                dma_init_return_d = RETURN_MODIFY; // Return here after DMA init
+                modify_state_d = MODIFY_TAIL_REGS; // Next state after returning from DMA init
+              end else begin
+                // No tail bytes: proceed to WRITE FSM after counter updates
+                modify_state_d = MODIFY_TAIL_TRANS;
+              end
+            end
+          end
+
+          // ============== DMA CONFIGURATION (TAIL) ==============
+          MODIFY_TAIL_REGS: begin
+            // Similar to MODIFY_HEAD_REGS but for remaining 1-3 bytes at the end of the sector
+            modify_state_d = MODIFY_TAIL_TRANS;
+
+            set_dma_regs(
+                reg2hw.md_address.q + md_offset_q,
+              reg2hw.s_address.q + {20'h0, sector_offset_q},
+                32'h1, // 1-byte transfer
+                2'h2,  // Data type: 2 = 8-bit
+                tail_bytes_q
+            );
+
+            sector_written_bytes_d = sector_written_bytes_q + {11'h0, tail_bytes_q};
+          end
+
+          // ============== WAIT FOR DMA COMPLETION (TAIL) ==============
+          MODIFY_TAIL_TRANS: begin
             if (dma_done_i[0]) begin  // DMA channel 0 done signal
               // Update LENGTH register for next iteration (if any)
               hw2reg.length.de = 1'b1;
-              if (reg2hw.length.q < {19'h0, SE_BSIZE} - sector_offset) begin
+              if (reg2hw.length.q <= {19'h0, sector_written_bytes_q}) begin
                 // All remaining data has been transferred at this iteration: set length to 0 and reset md_offset
                 hw2reg.length.d = 32'h0;
                 md_offset_d = 32'h0;
               end else begin
                 // More data remains: compute remaining length for next sector iteration and update md_offset
-                hw2reg.length.d = reg2hw.length.q - ({19'h0, SE_BSIZE} - sector_offset);
-                md_offset_d = md_offset_q + ({19'h0, SE_BSIZE} - sector_offset);
+                hw2reg.length.d = reg2hw.length.q - {19'h0, sector_written_bytes_q};
+                md_offset_d = md_offset_q + {19'h0, sector_written_bytes_q};
               end
               // Proceed with WRITE FSM to program modified sector (page by page (page: 256 bytes)) back to flash
               modify_state_d = MODIFY_IDLE;
