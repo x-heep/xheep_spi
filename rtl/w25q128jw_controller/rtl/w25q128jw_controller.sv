@@ -101,12 +101,10 @@ module w25q128jw_controller
   // verilog_format: on
 
   function automatic void set_dma_regs(
-      input logic [31:0] src_ptr,
-      input logic [31:0] dst_ptr,
-      input logic [31:0] ptr_inc,
-      input logic [1:0] data_type,
-      input logic [15:0] size_d1
-  );
+      input logic [31:0] src_ptr, input logic [31:0] dst_ptr, input logic [31:0] src_ptr_inc,
+      input logic [31:0] dst_ptr_inc, input logic [1:0] data_type,
+      input logic [31:0] rx_tx_trigger_slot, input logic [31:0] slot_wait_counter,
+      input logic [15:0] size_d1);
     // Set DMA source pointer
     external_dma_hw2reg_o.src_ptr.de = 1'b1;
     external_dma_hw2reg_o.src_ptr.d = src_ptr;
@@ -115,10 +113,10 @@ module w25q128jw_controller
     external_dma_hw2reg_o.dst_ptr.d = dst_ptr;
     // Set source increment
     external_dma_hw2reg_o.src_ptr_inc_d1.de = 1'b1;
-    external_dma_hw2reg_o.src_ptr_inc_d1.d  = ptr_inc;
+    external_dma_hw2reg_o.src_ptr_inc_d1.d = src_ptr_inc;
     // Set destination increment
     external_dma_hw2reg_o.dst_ptr_inc_d1.de = 1'b1;
-    external_dma_hw2reg_o.dst_ptr_inc_d1.d  = ptr_inc;
+    external_dma_hw2reg_o.dst_ptr_inc_d1.d = dst_ptr_inc;
     // Set source data type (See hw/vendor/xheep_dma/data/dma.hjson for encoding)
     external_dma_hw2reg_o.src_data_type.de = 1'b1;
     external_dma_hw2reg_o.src_data_type.d = data_type;
@@ -127,12 +125,12 @@ module w25q128jw_controller
     external_dma_hw2reg_o.dst_data_type.d = data_type;
     // Set DMA trigger slots (See sw/device/lib/drivers/dma/dma.h for trigger slot mapping)
     external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
-    external_dma_hw2reg_o.slot.rx_trigger_slot.d = '0;
+    external_dma_hw2reg_o.slot.rx_trigger_slot.d = rx_tx_trigger_slot;
     external_dma_hw2reg_o.slot.tx_trigger_slot.de = 1'b1;
-    external_dma_hw2reg_o.slot.tx_trigger_slot.d = '0;
+    external_dma_hw2reg_o.slot.tx_trigger_slot.d = rx_tx_trigger_slot;
     // Set slot wait counter
     external_dma_hw2reg_o.slot_wait_counter.de = 1'b1;
-    external_dma_hw2reg_o.slot_wait_counter.d = '0;
+    external_dma_hw2reg_o.slot_wait_counter.d = slot_wait_counter;
 
     // Set transfer size and START DMA
     // Writing to SIZE_D1 register triggers DMA transaction (See hw/ip/dma/data/dma.hjson)
@@ -180,7 +178,12 @@ module w25q128jw_controller
     READ_SPI_QUAD_WAIT_READY_DUMMY,  // Wait for SPI Host
     READ_SPI_SEND_CMD_5_QUAD,        // Send RX command (quad mode)
 
-    READ_TRANS  // Wait for DMA transfer complete
+    READ_TRANS,       // Wait for DMA transfer complete (write path only)
+    READ_HEAD_TRANS,  // Wait for head DMA completion
+    READ_BODY_REGS,   // Configure body DMA
+    READ_BODY_TRANS,  // Wait for body DMA completion
+    READ_TAIL_REGS,   // Configure tail DMA
+    READ_TAIL_TRANS   // Wait for tail DMA, then complete
   } read_state_e;
 
   // -------- FLASH WAIT FSM STATES --------
@@ -236,7 +239,7 @@ module w25q128jw_controller
     MODIFY_IDLE,  // Leads to DMA initialization
 
     // Set the DMA registers (ram_new_data + offset (which sector we are now looking to write into + F_ADDRESS sector misalignment))
-    MODIFY_HEAD_REGS, 
+    MODIFY_HEAD_REGS,
     MODIFY_BODY_REGS,
     MODIFY_TAIL_REGS,
 
@@ -316,6 +319,15 @@ module w25q128jw_controller
 
   logic [31:0] dma_size;
   logic [31:0] flash_address;
+
+  function automatic void complete_read();
+    read_state_d            = READ_IDLE;
+    top_state_d             = TOP_IDLE;
+    hw2reg.control.start.de = 1'b1;
+    hw2reg.control.start.d  = 1'b0;
+    hw2reg.intr_status.de   = 1'b1;
+    hw2reg.intr_status.d    = reg2hw.intr_enable.q;
+  endfunction
 
   // FSM sequential logic
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -437,6 +449,19 @@ module w25q128jw_controller
         case (read_state_q)
           // -------- IDLE: Trigger DMA initialization --------
           READ_IDLE: begin
+            if (reg2hw.control.rnw.q) begin
+              // READ: Number of bytes to copy 1 by 1 before & after word-aligned transfer
+              head_bytes_d = 2'h0 - reg2hw.s_address.q[1:0];
+              if (reg2hw.length.q <= {30'h0, head_bytes_d}) begin
+                head_bytes_d = reg2hw.length.q[1:0];
+                tail_bytes_d = 2'h0;
+              end else begin
+                tail_bytes_d = reg2hw.s_address.q[1:0] + reg2hw.length.q[1:0];
+              end
+
+              md_offset_d = 32'h0;
+            end
+
             top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
             dma_init_return_d = RETURN_READ;  // Return here after DMA init
             read_state_d      = READ_SET_DMA;  // Next state after returning from DMA init
@@ -445,47 +470,42 @@ module w25q128jw_controller
           // ============== DMA CONFIGURATION ==============
           READ_SET_DMA: begin
             read_state_d = READ_SPI_CHECK_TX_FIFO;
-            //Set DMA source pointer: SPI RX FIFO
-            external_dma_hw2reg_o.src_ptr.de = 1'b1;
-            external_dma_hw2reg_o.src_ptr.d  = SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}; // SPI RX FIFO address;
-            //Set DMA destination pointer: RAM sector buffer
-            external_dma_hw2reg_o.dst_ptr.de = 1'b1;
-            external_dma_hw2reg_o.dst_ptr.d = reg2hw.s_address.q; // RAM buffer address from S_ADDRESS register
-            //Set source increment: 0 (stay at FIFO address)
-            external_dma_hw2reg_o.src_ptr_inc_d1.de = 1'b1;
-            external_dma_hw2reg_o.src_ptr_inc_d1.d  = '0; // No increment - always read from RX FIFO address
-            //Set destination increment: +4 bytes per word
-            external_dma_hw2reg_o.dst_ptr_inc_d1.de = 1'b1;
-            external_dma_hw2reg_o.dst_ptr_inc_d1.d  = 'h04; // Increment by 4 bytes (32-bit word) in RAM
-            //Set source data type: 32-bit word
-            external_dma_hw2reg_o.src_data_type.de = 1'b1;
-            external_dma_hw2reg_o.src_data_type.d = '0;  // 0 = 32-bit word
-            //Set destination data type: 32-bit word
-            external_dma_hw2reg_o.dst_data_type.de = 1'b1;
-            external_dma_hw2reg_o.dst_data_type.d = '0;  // 0 = 32-bit word
-            //Set DMA trigger slots
-            external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
-            external_dma_hw2reg_o.slot.rx_trigger_slot.d = 'h4;
-            external_dma_hw2reg_o.slot.tx_trigger_slot.de = 1'b1;
-            external_dma_hw2reg_o.slot.tx_trigger_slot.d = '0;
-            //Set slot wait counter
-            external_dma_hw2reg_o.slot_wait_counter.de = 1'b1;
-            external_dma_hw2reg_o.slot_wait_counter.d   = reg2hw.dma_slot_wait_counter.q; // slot_wait_counter to write to DMA
 
-            //Set transfer size and START DMA
-            external_dma_hw2reg_o.size_d1.de = 1'b1;
             if (reg2hw.control.rnw.q) begin
-              // READ operation: transfer user-specified length
-              if (reg2hw.length.q[1:0] == 0) begin
-                dma_size = reg2hw.length.q >> 2;  // Exact word count (length divisible by 4)
+              // READ: Set DMA for flash -> RAM transfer (head, body, or tail)
+              if (head_bytes_q != 2'h0) begin
+                // HEAD: unaligned start address, byte-wise transfer until next word boundary
+                set_dma_regs(
+                    SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
+                    32'h0, 32'h1,  // src_inc=0 (FIFO), dst_inc=1 (byte)
+                    2'h2,  // 8-bit data type
+                    'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
+                    {14'h0, head_bytes_q});
               end else begin
-                dma_size = (reg2hw.length.q >> 2) + 1;  // Round up to next word
+                dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
+
+                if (dma_size != 0) begin
+                  // BODY: word-aligned transfer, 4 bytes at a time
+                  set_dma_regs(
+                      SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
+                      32'h0, 32'h4,  // src_inc=0 (FIFO), dst_inc=4 (word)
+                      2'h0,  // 32-bit data type
+                      'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
+                      dma_size[15:0]);
+                end else begin
+                  // TAIL only
+                  set_dma_regs(
+                      SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
+                      32'h0, 32'h1,  // src_inc=0 (FIFO), dst_inc=1 (byte)
+                      2'h2,  // 8-bit data type
+                      'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
+                      {14'h0, tail_bytes_q});
+                end
               end
             end else begin
               // WRITE operation: always read one sector (1024 words = 4KB)
               dma_size = {19'b0, SE_WSIZE};
             end
-            external_dma_hw2reg_o.size_d1.d = dma_size[15:0];
           end
 
           // ============== SPI COMMAND SEQUENCE ==============
@@ -576,7 +596,15 @@ module w25q128jw_controller
                   spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
             end
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
-              read_state_d = READ_TRANS;
+              if (!reg2hw.control.rnw.q) begin
+                read_state_d = READ_TRANS;  // Write path: full sector DMA
+              end else if (head_bytes_q != 0) begin
+                read_state_d = READ_HEAD_TRANS;
+              end else if ((reg2hw.length.q >> 2) != 0) begin
+                read_state_d = READ_BODY_TRANS;
+              end else begin
+                read_state_d = READ_TAIL_TRANS;
+              end
             end
           end
 
@@ -686,27 +714,92 @@ module w25q128jw_controller
                   spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
             end
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
-              read_state_d = READ_TRANS;
+              if (!reg2hw.control.rnw.q) begin
+                read_state_d = READ_TRANS;  // Write path: full sector DMA
+              end else if (head_bytes_q != 0) begin
+                read_state_d = READ_HEAD_TRANS;
+              end else if ((reg2hw.length.q >> 2) != 0) begin
+                read_state_d = READ_BODY_TRANS;
+              end else begin
+                read_state_d = READ_TAIL_TRANS;
+              end
             end
           end
 
           // ============== WAIT FOR DMA COMPLETION ==============
           READ_TRANS: begin
             if (dma_done_i[0]) begin  // DMA channel 0 done signal
-              if (reg2hw.control.rnw.q) begin
-                // ===== READ OPERATION COMPLETE =====
-                read_state_d            = READ_IDLE;
-                top_state_d             = TOP_IDLE;
-                hw2reg.control.start.de = 1'b1;
-                hw2reg.control.start.d  = 1'b0;
-                hw2reg.intr_status.de   = 1'b1;
-                hw2reg.intr_status.d    = reg2hw.intr_enable.q;
-              end else begin
-                // ===== WRITE OPERATION: Proceed to FWAIT =====
-                read_state_d  = READ_IDLE;
-                top_state_d   = TOP_FWAIT;
-                fwait_state_d = FWAIT_IDLE;
-              end
+              // ===== WRITE OPERATION: Proceed to FWAIT =====
+              read_state_d  = READ_IDLE;
+              top_state_d   = TOP_FWAIT;
+              fwait_state_d = FWAIT_IDLE;
+            end
+          end
+
+          READ_HEAD_TRANS: begin
+            if (dma_done_i[0]) begin
+              md_offset_d       = md_offset_q + {30'h0, head_bytes_q};
+
+              top_state_d       = TOP_DMA_INIT;
+              dma_init_return_d = RETURN_READ;
+              read_state_d      = READ_BODY_REGS;  // Next state after returning from DMA init
+            end
+          end
+
+          // ============== DMA CONFIGURATION (BODY) ==============
+          READ_BODY_REGS: begin
+            // We can arrive directly here from READ_SPI_SEND_CMD_2 or READ_SPI_SEND_CMD_5_QUAD
+            dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
+
+            if (dma_size != 0) begin
+              read_state_d = READ_BODY_TRANS;
+
+              set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
+                           reg2hw.s_address.q + md_offset_q, 32'h0,
+                           32'h4,  // src_inc=0 (FIFO), dst_inc=4 (word)
+                           2'h0,  // 32-bit data type
+                           'h4,
+                           reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
+                           dma_size[15:0]);
+            end else begin
+              // No body to transfer, goto to tail
+              read_state_d = READ_TAIL_REGS;
+            end
+          end
+
+          // ============== WAIT FOR DMA COMPLETION (BODY) ==============
+          READ_BODY_TRANS: begin
+            if (dma_done_i[0]) begin  // DMA channel 0 done signal
+              md_offset_d       = md_offset_q + (dma_size << 2);
+
+              top_state_d       = TOP_DMA_INIT;
+              dma_init_return_d = RETURN_READ;
+              read_state_d      = READ_TAIL_REGS;  // Next state after returning from DMA init
+            end
+          end
+
+          // ============== DMA CONFIGURATION (TAIL) ==============
+          READ_TAIL_REGS: begin
+            if (tail_bytes_q != 0) begin
+              read_state_d = READ_TAIL_TRANS;
+
+              set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
+                           reg2hw.s_address.q + md_offset_q, 32'h0,
+                           32'h1,  // src_inc=0 (FIFO), dst_inc=1 (byte)
+                           2'h2,  // 8-bit data type
+                           'h4,
+                           reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
+                           {14'h0, tail_bytes_q});
+            end else begin
+              // No tail to transfer, complete operation
+              complete_read();
+            end
+          end
+
+          // ============== WAIT FOR DMA COMPLETION (TAIL) ==============
+          READ_TAIL_TRANS: begin
+            if (dma_done_i[0]) begin  // DMA channel 0 done signal
+              complete_read();
             end
           end
 
@@ -1052,7 +1145,7 @@ module w25q128jw_controller
             if (sector_iter_offset_q == 0) begin
               sector_offset_d = reg2hw.f_address.q[11:0]; // Offset within sector for first iteration
             end else begin
-              sector_offset_d = 12'h0; // Begin from start of sector for next iterations
+              sector_offset_d = 12'h0;  // Begin from start of sector for next iterations
             end
 
             // Count number of bytes already written in this sector
@@ -1060,14 +1153,15 @@ module w25q128jw_controller
 
             // Number of bytes to copy 1 by 1 before & after word-aligned transfer
             head_bytes_d = 2'h0 - sector_offset_d[1:0];
-            if (reg2hw.length.q < {30'h0, head_bytes_d}) begin
+            if (reg2hw.length.q <= {30'h0, head_bytes_d}) begin
               head_bytes_d = reg2hw.length.q[1:0];
+              tail_bytes_d = 2'h0;
+            end else begin
+              tail_bytes_d = sector_offset_d[1:0] + reg2hw.length.q[1:0];
             end
 
-            tail_bytes_d = sector_offset_d[1:0] + reg2hw.length.q[1:0];
-
-            top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
-            dma_init_return_d = RETURN_MODIFY; // Return here after DMA init
+            top_state_d       = TOP_DMA_INIT;
+            dma_init_return_d = RETURN_MODIFY;
 
             // Next state after returning from DMA init
             if (head_bytes_d != 0) begin
@@ -1079,24 +1173,18 @@ module w25q128jw_controller
 
           // ============== DMA CONFIGURATION (HEAD) ==============
           MODIFY_HEAD_REGS: begin
-            // If head copy reaches sector end (or consumes all remaining bytes),
-            // there is no body transfer in this sector
-            if ((reg2hw.length.q <= {30'h0, head_bytes_q}) ||
-                (({20'h0, sector_offset_q} + {30'h0, head_bytes_q}) == {19'h0, SE_BSIZE})) begin
-              modify_state_d = MODIFY_TAIL_TRANS;
-            end else begin
+            if (head_bytes_q != 0) begin
               modify_state_d = MODIFY_HEAD_TRANS;
+
+              set_dma_regs(reg2hw.md_address.q + md_offset_q,
+                           reg2hw.s_address.q + {20'h0, sector_offset_q}, 32'h1,
+                           32'h1,  // 1-byte transfer
+                           2'h2,  // Data type: 2 = 8-bit
+                           'h0, 'h0, {14'h0, head_bytes_q});
+            end else begin
+              // No head to transfer, go directly to body
+              modify_state_d = MODIFY_BODY_REGS;
             end
-
-            set_dma_regs(
-                reg2hw.md_address.q + md_offset_q,
-                reg2hw.s_address.q + {20'h0, sector_offset_q},
-                32'h1, // 1-byte transfer
-                2'h2,  // Data type: 2 = 8-bit
-                {14'h0, head_bytes_q}
-            );
-
-            sector_written_bytes_d = sector_written_bytes_q + {11'h0, head_bytes_q};
           end
 
           // ============== WAIT FOR DMA COMPLETION (HEAD) ==============
@@ -1104,84 +1192,62 @@ module w25q128jw_controller
             if (dma_done_i[0]) begin
               md_offset_d = md_offset_q + {30'h0, head_bytes_q};
               sector_offset_d = sector_offset_q + {10'h0, head_bytes_q};
-              
-              top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
-              dma_init_return_d = RETURN_MODIFY; // Return here after DMA init
-              modify_state_d = MODIFY_BODY_REGS; // Next state after returning from DMA init
+              sector_written_bytes_d = sector_written_bytes_q + {11'h0, head_bytes_q};
+
+              top_state_d = TOP_DMA_INIT;
+              dma_init_return_d = RETURN_MODIFY;
+              modify_state_d = MODIFY_BODY_REGS;  // Next state after returning from DMA init
             end
           end
 
           // ============== DMA CONFIGURATION (BODY) ==============
           MODIFY_BODY_REGS: begin
             // Compute how many words to transfer for this sector
-            if (reg2hw.length.q - head_bytes_q < {19'h0, SE_BSIZE} - {20'h0, sector_offset_q}) begin
+            if (reg2hw.length.q - {19'h0, sector_written_bytes_q} < {19'h0, SE_BSIZE} - {20'h0, sector_offset_q}) begin
               // Case 1: All remaining data fits in this sector
-              dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
-
-              modify_state_d = MODIFY_BODY_TRANS;
+              dma_size = (reg2hw.length.q - {19'h0, sector_written_bytes_q}) >> 2;
             end else begin
               // Case 2: Data spans multiple sectors. Fill remaining sector space
               // Transfer (4KB - offset) bytes
               dma_size = (({19'h0, SE_BSIZE} - {20'h0, sector_offset_q}) >> 2);
-
-              modify_state_d = MODIFY_TAIL_TRANS;
             end
 
-            if (dma_size == 0) begin
+            if (dma_size != 0) begin
+              set_dma_regs(reg2hw.md_address.q + md_offset_q,
+                           reg2hw.s_address.q + {20'h0, sector_offset_q}, 32'h4,
+                           32'h4,  // 4-byte increment for word transfers
+                           2'h0,  // Data type: 0 = 32-bit
+                           'h0, 'h0, dma_size[15:0]);
+
+              modify_state_d = MODIFY_BODY_TRANS;
+            end else begin
               // No body to transfer, skip to tail
               modify_state_d = MODIFY_TAIL_REGS;
-            end else begin
-              set_dma_regs(
-                  reg2hw.md_address.q + md_offset_q,
-                  reg2hw.s_address.q + {20'h0, sector_offset_q},
-                  32'h4,  // 4-byte increment for word transfers
-                  2'h0,   // Data type: 0 = 32-bit
-                  dma_size[15:0]
-              );
-
-              sector_written_bytes_d = sector_written_bytes_q + {dma_size[10:0], 2'b00};
             end
           end
 
           // ============== WAIT FOR DMA COMPLETION (BODY) ==============
           MODIFY_BODY_TRANS: begin
             if (dma_done_i[0]) begin  // DMA channel 0 done signal
-              if (tail_bytes_q != 2'h0) begin
-                // More bytes remain after word-aligned transfer: configure DMA for tail bytes
-                md_offset_d = md_offset_q + (dma_size << 2);
-                sector_offset_d = sector_offset_q + (dma_size << 2);
+              md_offset_d = md_offset_q + (dma_size << 2);
+              sector_offset_d = sector_offset_q + (dma_size << 2);
+              sector_written_bytes_d = sector_written_bytes_q + (dma_size << 2);
 
-                top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
-                dma_init_return_d = RETURN_MODIFY; // Return here after DMA init
-                modify_state_d = MODIFY_TAIL_REGS; // Next state after returning from DMA init
-              end else begin
-                // No tail bytes: proceed to WRITE FSM after counter updates
-                modify_state_d = MODIFY_TAIL_TRANS;
-              end
+              top_state_d = TOP_DMA_INIT;
+              dma_init_return_d = RETURN_MODIFY;
+              modify_state_d = MODIFY_TAIL_REGS;  // Next state after returning from DMA init
             end
           end
 
           // ============== DMA CONFIGURATION (TAIL) ==============
           MODIFY_TAIL_REGS: begin
-            // Similar to MODIFY_HEAD_REGS but for remaining 1-3 bytes at the end of the sector
-            modify_state_d = MODIFY_TAIL_TRANS;
-
-            set_dma_regs(
-                reg2hw.md_address.q + md_offset_q,
-              reg2hw.s_address.q + {20'h0, sector_offset_q},
-                32'h1, // 1-byte transfer
-                2'h2,  // Data type: 2 = 8-bit
-                tail_bytes_q
-            );
-
-            sector_written_bytes_d = sector_written_bytes_q + {11'h0, tail_bytes_q};
-          end
-
-          // ============== WAIT FOR DMA COMPLETION (TAIL) ==============
-          MODIFY_TAIL_TRANS: begin
-            if (dma_done_i[0]) begin  // DMA channel 0 done signal
+            // If body copy consumed all remaining bytes (or reached sector end, no tail),
+            // forward to TOP_WRITE to program modified sector back to flash
+            if ((reg2hw.length.q <= {19'h0, sector_written_bytes_q}) ||
+                (sector_written_bytes_q != 0 && sector_offset_q == 0)) begin
               // Update LENGTH register for next iteration (if any)
               hw2reg.length.de = 1'b1;
+
               if (reg2hw.length.q <= {19'h0, sector_written_bytes_q}) begin
                 // All remaining data has been transferred at this iteration: set length to 0 and reset md_offset
                 hw2reg.length.d = 32'h0;
@@ -1191,10 +1257,35 @@ module w25q128jw_controller
                 hw2reg.length.d = reg2hw.length.q - {19'h0, sector_written_bytes_q};
                 md_offset_d = md_offset_q + {19'h0, sector_written_bytes_q};
               end
+
               // Proceed with WRITE FSM to program modified sector (page by page (page: 256 bytes)) back to flash
               modify_state_d = MODIFY_IDLE;
-              top_state_d = TOP_WRITE;
-              write_state_d = WRITE_IDLE;
+              top_state_d    = TOP_WRITE;
+              write_state_d  = WRITE_IDLE;
+            end else begin
+              set_dma_regs(reg2hw.md_address.q + md_offset_q,
+                           reg2hw.s_address.q + {20'h0, sector_offset_q}, 32'h1,
+                           32'h1,  // 1-byte transfer
+                           2'h2,  // Data type: 2 = 8-bit
+                           'h0, 'h0, tail_bytes_q);
+
+              modify_state_d = MODIFY_TAIL_TRANS;
+            end
+          end
+
+          // ============== WAIT FOR DMA COMPLETION (TAIL) ==============
+          MODIFY_TAIL_TRANS: begin
+            if (dma_done_i[0]) begin  // DMA channel 0 done signal
+              sector_written_bytes_d = sector_written_bytes_q + {11'h0, tail_bytes_q};
+
+              // All remaining data has been transferred at this iteration
+              hw2reg.length.de = 1'b1;
+              hw2reg.length.d  = 32'h0;
+
+              // Proceed with WRITE FSM to program modified sector (page by page (page: 256 bytes)) back to flash
+              modify_state_d = MODIFY_IDLE;
+              top_state_d    = TOP_WRITE;
+              write_state_d  = WRITE_IDLE;
             end
           end
 
