@@ -656,12 +656,13 @@ module w25q128jw_controller
             spi_host_reg_req_o.valid = 1'b1;
 
             if (reg2hw.control.rnw.q) begin
-              // READ: Use word-aligned flash address from F_ADDRESS register
-              flash_address = reg2hw.f_address.q & 32'h00fffffc;
+              // READ: Use exact flash address from F_ADDRESS register
+              flash_address = reg2hw.f_address.q & 32'h00ffffff;
             end else begin
               // WRITE: Use sector-aligned address + current sector iteration offset
-              flash_address = (reg2hw.f_address.q & 32'h00fff000) + sector_iter_offset_q;
+              flash_address = (reg2hw.f_address.q & 32'h00fff000) + (sector_iter_offset_q);
             end
+
             spi_host_reg_req_o.wdata = (bitfield_byteswap32(flash_address) >> 8) |
                 32'hff000000;  // Address with all 4 bytes to be sent (quad mode)
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
@@ -712,16 +713,17 @@ module w25q128jw_controller
             spi_host_reg_req_offset  = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
+
             if (reg2hw.control.rnw.q) begin
-              // READ: receive user-specified number of bytes (round up to next word if not divisible by 4)
+              // READ: receive user-specified number of bytes
               spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0,
-                               ((reg2hw.length.q + 32'h3) & 32'hfffffffc) - 1'h1);
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
             end else begin
-              // WRITE: read full sector
+              // WRITE: read full sector (4096 bytes)
               spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
             end
+
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               if (!reg2hw.control.rnw.q) begin
                 read_state_d = READ_TRANS;  // Write path: full sector DMA
