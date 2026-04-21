@@ -127,7 +127,7 @@ module w25q128jw_controller
     external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
     external_dma_hw2reg_o.slot.rx_trigger_slot.d = rx_tx_trigger_slot;
     external_dma_hw2reg_o.slot.tx_trigger_slot.de = 1'b1;
-    external_dma_hw2reg_o.slot.tx_trigger_slot.d = rx_tx_trigger_slot;
+    external_dma_hw2reg_o.slot.tx_trigger_slot.d = '0;
     // Set slot wait counter
     external_dma_hw2reg_o.slot_wait_counter.de = 1'b1;
     external_dma_hw2reg_o.slot_wait_counter.d = slot_wait_counter;
@@ -394,6 +394,8 @@ module w25q128jw_controller
     sector_iter_offset_d = sector_iter_offset_q;
     md_offset_d = md_offset_q;
     spi_control_d = spi_control_q;
+    head_bytes_d = head_bytes_q;
+    tail_bytes_d = tail_bytes_q;
 
     hw2reg.control.start.de = 1'b0;
     hw2reg.control.start.d = 1'b0;
@@ -505,6 +507,13 @@ module w25q128jw_controller
             end else begin
               // WRITE operation: always read one sector (1024 words = 4KB)
               dma_size = {19'b0, SE_WSIZE};
+
+              set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
+                           reg2hw.s_address.q, 32'h0, 32'h4,  // src_inc=0 (FIFO), dst_inc=4 (word)
+                           2'h0,  // 32-bit data type
+                           'h4,
+                           reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
+                           dma_size[15:0]);
             end
           end
 
@@ -770,6 +779,7 @@ module w25q128jw_controller
           // ============== WAIT FOR DMA COMPLETION (BODY) ==============
           READ_BODY_TRANS: begin
             if (dma_done_i[0]) begin  // DMA channel 0 done signal
+              dma_size          = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
               md_offset_d       = md_offset_q + (dma_size << 2);
 
               top_state_d       = TOP_DMA_INIT;
