@@ -178,12 +178,16 @@ module w25q128jw_controller
     READ_SPI_QUAD_WAIT_READY_DUMMY,  // Wait for SPI Host
     READ_SPI_SEND_CMD_5_QUAD,        // Send RX command (quad mode)
 
-    READ_TRANS,       // Wait for DMA transfer complete (write path only)
-    READ_HEAD_TRANS,  // Wait for head DMA completion
-    READ_BODY_REGS,   // Configure body DMA
-    READ_BODY_TRANS,  // Wait for body DMA completion
-    READ_TAIL_REGS,   // Configure tail DMA
-    READ_TAIL_TRANS   // Wait for tail DMA, then complete
+    READ_TRANS,            // Wait for DMA transfer complete (write path only)
+    READ_HEAD_TRANS,       // Wait for head DMA completion
+    READ_BODY_REGS,        // Configure body DMA
+    READ_BODY_WAIT_READY,  // Wait for SPI Host
+    READ_BODY_SEND_CMD,    // Send command for body transfer
+    READ_BODY_TRANS,       // Wait for body DMA completion
+    READ_TAIL_REGS,        // Configure tail DMA
+    READ_TAIL_WAIT_READY,  // Wait for SPI Host
+    READ_TAIL_SEND_CMD,    // Send command for tail transfer
+    READ_TAIL_TRANS        // Wait for tail DMA, then complete
   } read_state_e;
 
   // -------- FLASH WAIT FSM STATES --------
@@ -591,14 +595,35 @@ module w25q128jw_controller
           //   CSAAT 0,
           //   Length-1 
           READ_SPI_SEND_CMD_2: begin
-            spi_host_reg_req_offset  = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
+
+            dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
+
             if (reg2hw.control.rnw.q) begin
-              // READ: receive user-specified number of bytes (round up to next word if not divisible by 4)
-              spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0,
-                               ((reg2hw.length.q + 32'h3) & 32'hfffffffc) - 1'h1);
+              // READ: receive user-specified number of bytes
+              if (head_bytes_q != 0) begin
+                // If we have a head (unaligned start)
+                spi_host_reg_req_o.wdata = spi_cmd_pack(
+                  SPI_DIR_RX,
+                  SPI_SPEED_STD,
+                  (dma_size != 0 || tail_bytes_q != 0),  // Expect another command if body or tail
+                  ({22'h0, head_bytes_q} - 1'h1)
+                );
+              end else if (dma_size != 0) begin
+                // If we have a body (word-aligned transfer)
+                spi_host_reg_req_o.wdata = spi_cmd_pack(
+                  SPI_DIR_RX,
+                  SPI_SPEED_STD,
+                  (tail_bytes_q != 0),  // Expect another command if tail
+                  ((dma_size << 2) - 1'h1)
+                );
+              end else begin
+                // Tail only
+                spi_host_reg_req_o.wdata =
+                    spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, ({22'h0, tail_bytes_q} - 1'h1));
+              end
             end else begin
               // WRITE: read full sector (4096 bytes)
               spi_host_reg_req_o.wdata =
@@ -716,6 +741,7 @@ module w25q128jw_controller
 
             if (reg2hw.control.rnw.q) begin
               // READ: receive user-specified number of bytes
+              // TODO: copy SEND_CMD_2 logic for head/body/tail
               spi_host_reg_req_o.wdata =
                   spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
             end else begin
@@ -763,7 +789,7 @@ module w25q128jw_controller
             dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
 
             if (dma_size != 0) begin
-              read_state_d = READ_BODY_TRANS;
+              read_state_d = READ_BODY_WAIT_READY;
 
               set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
                            reg2hw.s_address.q + md_offset_q, 32'h0,
@@ -775,6 +801,29 @@ module w25q128jw_controller
             end else begin
               // No body to transfer, goto to tail
               read_state_d = READ_TAIL_REGS;
+            end
+          end
+
+          READ_BODY_WAIT_READY: begin
+            // STATUS[31] = READY bit. Proceed if ready.
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
+              read_state_d = READ_BODY_SEND_CMD;
+            end
+          end
+
+          READ_BODY_SEND_CMD: begin
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = spi_cmd_pack(
+              SPI_DIR_RX,
+              reg2hw.control.quad.q ? SPI_SPEED_QUAD : SPI_SPEED_STD,
+              (tail_bytes_q != 0),  // Another command after only if tail
+              ((dma_size << 2) - 1'h1)
+            );
+
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_BODY_TRANS;
             end
           end
 
@@ -793,7 +842,7 @@ module w25q128jw_controller
           // ============== DMA CONFIGURATION (TAIL) ==============
           READ_TAIL_REGS: begin
             if (tail_bytes_q != 0) begin
-              read_state_d = READ_TAIL_TRANS;
+              read_state_d = READ_TAIL_WAIT_READY;
 
               set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
                            reg2hw.s_address.q + md_offset_q, 32'h0,
@@ -805,6 +854,29 @@ module w25q128jw_controller
             end else begin
               // No tail to transfer, complete operation
               complete_read();
+            end
+          end
+
+          READ_TAIL_WAIT_READY: begin
+            // STATUS[31] = READY bit. Proceed if ready.
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
+              read_state_d = READ_TAIL_SEND_CMD;
+            end
+          end
+
+          READ_TAIL_SEND_CMD: begin
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = spi_cmd_pack(
+              SPI_DIR_RX,
+              reg2hw.control.quad.q ? SPI_SPEED_QUAD : SPI_SPEED_STD,
+              1'b0,  // No more command after tail
+              ({22'h0, tail_bytes_q} - 1'h1)
+            );
+
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_TAIL_TRANS;
             end
           end
 
