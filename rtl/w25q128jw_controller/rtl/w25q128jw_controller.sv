@@ -483,7 +483,7 @@ module w25q128jw_controller
                 // HEAD: unaligned start address, byte-wise transfer until next word boundary
                 set_dma_regs(
                     SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
-                    32'h0, 32'h1,  // src_inc=0 (FIFO), dst_inc=1 (byte)
+                    32'h0, 32'h1,  // src_inc=0 (FIFO), dst_inc=1 (SRAM)
                     2'h2,  // 8-bit data type
                     'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                     {14'h0, head_bytes_q});
@@ -629,6 +629,7 @@ module w25q128jw_controller
               spi_host_reg_req_o.wdata =
                   spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
             end
+
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               if (!reg2hw.control.rnw.q) begin
                 read_state_d = READ_TRANS;  // Write path: full sector DMA
@@ -739,15 +740,35 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
 
+            dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
+
             if (reg2hw.control.rnw.q) begin
               // READ: receive user-specified number of bytes
-              // TODO: copy SEND_CMD_2 logic for head/body/tail
-              spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, reg2hw.length.q[23:0] - 1'h1);
+              if (head_bytes_q != 0) begin
+                // If we have a head (unaligned start)
+                spi_host_reg_req_o.wdata = spi_cmd_pack(
+                  SPI_DIR_RX,
+                  SPI_SPEED_QUAD,
+                  (dma_size != 0 || tail_bytes_q != 0),  // Expect another command if body or tail
+                  ({22'h0, head_bytes_q} - 1'h1)
+                );
+              end else if (dma_size != 0) begin
+                // If we have a body (word-aligned transfer)
+                spi_host_reg_req_o.wdata = spi_cmd_pack(
+                  SPI_DIR_RX,
+                  SPI_SPEED_QUAD,
+                  (tail_bytes_q != 0),  // Expect another command if tail
+                  ((dma_size << 2) - 1'h1)
+                );
+              end else begin
+                // Tail only
+                spi_host_reg_req_o.wdata =
+                    spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, ({22'h0, tail_bytes_q} - 1'h1));
+              end
             end else begin
               // WRITE: read full sector (4096 bytes)
               spi_host_reg_req_o.wdata =
-                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_STD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
+                  spi_cmd_pack(SPI_DIR_RX, SPI_SPEED_QUAD, 1'b0, {11'b0, SE_BSIZE - 1'h1});
             end
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
