@@ -24,6 +24,7 @@ module spi_subsystem
 % if base_peripheral_domain.contains_peripheral('axi_spi'):
     parameter type axi_req_t = logic,
     parameter type axi_resp_t = logic,
+    parameter int ClockFrequencyMAX_MHz = 1e3,
 % else:
 % endif
 % if base_peripheral_domain.contains_peripheral('obi_spi'):
@@ -220,6 +221,7 @@ end
   axi_to_flash_controller #(
       .ByteOrder,
       .AddrWidth,   // behavior differs depending from dataWidth, generated HW is always the same.
+      .ClockFrequencyMAX_MHz,
       .FlashAddrW(24),
       .DataWidth,
       .axi_req_t(axi_req_t),
