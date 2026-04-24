@@ -5,7 +5,7 @@
 **                                                                         **
 ** project  : x-heep                                                       **
 ** filename : spi_subsystem_structs.h                                 **
-** date     : 27/03/2026                                                      **
+** date     : 24/04/2026                                                      **
 **                                                                         **
 *****************************************************************************
 **                                                                         **
@@ -16,7 +16,7 @@
 
 /**
 * @file   spi_subsystem_structs.h
-* @date   27/03/2026
+* @date   24/04/2026
 * @brief  Contains structs for every register
 *
 * This file contains the structs of the registes of the peripheral.

@@ -117,7 +117,7 @@ spi-gen: reg periph-gen
 ## Generate spi_subsystem.sv
 .PHONY: periph-gen
 periph-gen:
-	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(RTL_DIR)/spi_subsystem.sv $(SPI_SUBSYS_PERIPH_GEN)
+	python3 $(RTL_DIR)/spi_subsystem_gen.py $(RTL_DIR)/spi_subsystem.sv.tpl $(OUT_DIR)/spi_subsystem.sv $(SPI_SUBSYS_PERIPH_GEN)
 
 ## Clean files
 .PHONY: clean
