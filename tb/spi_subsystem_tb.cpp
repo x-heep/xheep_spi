@@ -51,10 +51,10 @@
 
 // time constants
 // clock period is 2ps
-#define MAX_SIM_CYCLES 2e6
+#define MAX_SIM_CYCLES 2e7
 #define MAX_SIM_TIME (MAX_SIM_CYCLES * 2)
 #define END_OF_RESET_TIME 10
-#define WATCHDOG_TIMEOUT 1e10
+#define WATCHDOG_TIMEOUT 2e6
 #define SWRST_CYCLES 10
 #define END_OF_TEST_TIMEOUT 10
 #define IDLE_CYCLES 2

@@ -231,6 +231,9 @@ end
       // Enable power-on subrutine
       .poweron_en_i(reg2hw.control.a2f_ctr_poweron_en.q),
 
+      // Enable quad spi
+      .quadspi_en_i(reg2hw.control.a2f_ctr_quadspi_en.q),
+
       // register interface to SPI controller
       .spi_host_reg_req_o(reg_req_from_a2f_ctr),
       .spi_host_reg_rsp_i(reg_rsp_to_a2f_ctr),

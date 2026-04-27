@@ -46,7 +46,6 @@ module axi_to_flash_controller
 
   localparam int MaxBeats = 17,
   localparam int MaxBeatsDW = sizeInBits(MaxBeats+1),
-  localparam int SE_PSIZE = 32'(SE_WSIZE) / 32'(PAGE_WSIZE),
   localparam int PageCountDW = sizeInBits(SE_PSIZE+1),
   localparam int SectorBufferLatency = 1,
   localparam int SecBuffLatencyDW = sizeInBits(SectorBufferLatency+1),
@@ -54,6 +53,7 @@ module axi_to_flash_controller
   localparam int PowerOnWaitCycles = ClockFrequencyMAX_MHz * w25q128jw_tRES1_us,
   localparam int PoweronWaitCycles_SIM = 300,
   localparam int PowerOnWaitCyclesDW = sizeInBits(PowerOnWaitCycles+1),
+  localparam int SPI_FLASH_TX_FIFO_DEPTH = spi_host_reg_pkg::TxDepth,
   parameter int ClockFrequencyMAX_MHz = 1e3,
   parameter logic ByteOrder = 1, // 1 == Little Endian , 0 == Big Endian  ; @ 0 , beat_queues swap bytes.
   parameter int AddrWidth = 64,
@@ -74,6 +74,9 @@ module axi_to_flash_controller
 
   // Enable power-on subrutine
   input logic poweron_en_i,
+
+  // Enable quad spi
+  input logic quadspi_en_i,
 
   // Master ports to the SPI HOST
   output reg_req_t spi_host_reg_req_o,
@@ -154,25 +157,25 @@ module axi_to_flash_controller
     datawidth_is_64_n32 = A[0];
   end
 
-  // // Local parameters
+  // ---------------------------- Flash commands ----------------------------
+  localparam logic [12:0] FC_RD = 13'h03,     // Read Data
+                          FC_RDQIO = 13'heb,  // Read Data
+                          FC_PO = 13'hab,     // Power On
+                          FC_RSR1 = 13'h05,   // Read Status Register 1
+                          FC_WE = 13'h06,     // Write Enable
+                          FC_SE = 13'h20,     // Sector Erase 4KB
+                          FC_PP = 13'h02,     // Page Program
+                          FC_PPQ = 13'h32,    // Page Program Quad
+  // --------------------------------------------------------------------------------
 
-  localparam int SPI_FLASH_TX_FIFO_DEPTH = spi_host_reg_pkg::TxDepth;
-
-  // Flash commands
-  localparam logic [12:0] FC_RD = 13'h03,  // Read Data
-                          FC_PO = 13'hab,   // Power On
-                          FC_RSR1 = 13'h05,  // Read Status Register 1
-                          FC_WE = 13'h06,  // Write Enable
-                          FC_SE = 13'h20,  // Sector Erase 4KB
-                          FC_PP = 13'h02,  // Page Program
-
-  // W25Q128JW size constants
-                          SE_WSIZE = 13'h400,  // Sector size in words
-                          SE_BSIZE = 13'h1000,  // Sector size in bytes
-                          PAGE_WSIZE = 13'h40,  // Page size in words
-                          PAGE_BSIZE = 13'h100;  // Page size in bytes
-
-  localparam int SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));
+  // ---------------------------- Flash size constatnts ----------------------------
+                          SE_WSIZE = 13'h400,                         // Sector size in words
+                          SE_BSIZE = 13'h1000,                        // Sector size in bytes
+                          PAGE_WSIZE = 13'h40,                        // Page size in words
+                          PAGE_BSIZE = 13'h100;                       // Page size in bytes
+  localparam int          SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));  // used for signa declaration
+  localparam int          SE_PSIZE = 32'(SE_WSIZE) / 32'(PAGE_WSIZE); // Sector size in pages
+  // --------------------------------------------------------------------------------
 
   // Byte swap function
   function automatic [31:0] bitfield_byteswap32(input [31:0] adress_to_swap);
@@ -245,16 +248,32 @@ module axi_to_flash_controller
 
   // =========================================== READ SFM ================================================ //
   // Handles flash read operation
-  typedef enum logic [sizeInBits(15)-1:0] {
+  typedef enum logic [sizeInBits(26)-1:0] {
     READ_IDLE,               // In write, skip sector read if redundant. Evaluate flash access address
     READ_SET_RXWM_R,         // Read spi_host control register
     READ_SET_RXWM_W,         // Rewrite control register with rx_fifo watermark set to 1, to be immediately warned when flash data arrives
     READ_SPI_CHECK_TX_FIFO,  // Check whether tx_fifo has room
-    READ_SPI_FILL_TX_FIFO,   // Write read command (FC_RD) + address to tx_fifo
+    
+    // Standard spi branch
+    READ_SPI_FILL_TX_FIFO,   // Write standard read command (FC_RD) + address to tx_fifo
     READ_SPI_WAIT_READY_1,   // Wait for spi_host to be ready
     READ_SPI_SEND_CMD_1,     // Send command to spi_host to release tx_fifo data to flash
     READ_SPI_WAIT_READY_2,   // Wait for spi_host to be ready
     READ_SPI_SEND_CMD_2,     // Send command to spi_host to receive data from flash into rx_fifo
+    
+    // Quad spi branch
+    READ_QUAD_SPI_FILL_TX_FIFO_1,       // Write quad spi read command (FC_RDQIO) to tx_fifo
+    READ_QUAD_SPI_WAIT_READY_1,         // Wait for spi_host to be ready
+    READ_QUAD_SPI_SEND_CMD_1,           // Send command to spi_host to release tx_fifo data to flash
+    READ_QUAD_SPI_CHECK_TX_FIFO_2,      // Check whether tx_fifo has room
+    READ_QUAD_SPI_FILL_TX_FIFO_2,       // Write address to tx_fifo
+    READ_QUAD_SPI_WAIT_READY_2,         // Wait for spi_host to be ready
+    READ_QUAD_SPI_SEND_CMD_2,           // Send command to spi_host to release tx_fifo data to flash (at quad speed) 
+    READ_QUAD_SPI_WAIT_READY_3,         // Wait for spi_host to be ready
+    READ_QUAD_SPI_SEND_CMD_3,           // Send command to spi_host to execute dummy flash read cycles (at quad speed)
+    READ_QUAD_SPI_WAIT_READY_4,         // Wait for spi_host to be ready 
+    READ_QUAD_SPI_SEND_CMD_4,           // Send command to spi_host to receive data from flash into rx_fifo (at quad speed)
+
     READ_WAIT_RXWM,          // Check whether data is present in rx_fifo
     READ_W_SECTOR_STORE,     // Only write : store the beat's sector inside the local sector buffer, word by word.
     READ_R_BEAT_PUSH_DW32,   // Only read , 32 bits : store current beat inside local buffer
@@ -740,7 +759,7 @@ int actual_poweron_wait_cycles;
           end
 
           POWERON_SPI_SEND_CMD: begin
-            // Send command to spi_host : send PO command to flash 
+            // Send command to spi_host : send power on command to flash 
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
@@ -843,13 +862,17 @@ int actual_poweron_wait_cycles;
 
           READ_SPI_CHECK_TX_FIFO: begin
             // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
+            // At this point, given the value of quadspi_en_i (from external top register), it is decided the speed of the spi read
+            // A different branch in the TOP_READ FSM is taken depending on the spi speed
             if (external_spi_host_hw2reg_status_i.txqd.d < SPI_FLASH_TX_FIFO_DEPTH[7:0]) begin
-              read_state_d = READ_SPI_FILL_TX_FIFO;
+              if (~quadspi_en_i) read_state_d = READ_SPI_FILL_TX_FIFO;
+              if ( quadspi_en_i) read_state_d = READ_QUAD_SPI_FILL_TX_FIFO_1;
             end
           end
 
           READ_SPI_FILL_TX_FIFO: begin
-            // Write READ command + flash address in tx_fifo
+            // Here starts the standard spi speed read branch
+            // Write standard read command + flash address in tx_fifo
             spi_host_reg_req_offset  = SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
@@ -868,8 +891,9 @@ int actual_poweron_wait_cycles;
               read_state_d = READ_SPI_SEND_CMD_1;
             end
           end
+
           READ_SPI_SEND_CMD_1: begin
-            // Send command to spi_host : send opcode and address to flash 
+            // Send command to spi_host : send standard read command and address to flash 
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
@@ -887,6 +911,7 @@ int actual_poweron_wait_cycles;
               read_state_d = READ_SPI_WAIT_READY_2;
             end
           end
+
           READ_SPI_WAIT_READY_2: begin
             // Wait for spi_host to be ready (command queue not busy)
             if (external_spi_host_hw2reg_status_i.ready.d) begin
@@ -915,6 +940,157 @@ int actual_poweron_wait_cycles;
               // WRITE: read full sector (4096 bytes)
               spi_host_reg_req_o.wdata = {
                 3'h0, 2'h1, 2'h0, 1'h0, {11'b0, SE_BSIZE - 1'h1}
+              }; // Empty + Direction + Speed + Csaat + Length
+              word_count_d = 0; // restart the word counter to count up to one sector
+            end
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_WAIT_RXWM;
+            end
+          end
+
+          READ_QUAD_SPI_FILL_TX_FIFO_1: begin
+            // Here starts the quad spi speed read branch
+            // Write quad read command in tx_fifo
+            spi_host_reg_req_offset  = SPI_HOST_TXDATA_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = {19'h0, FC_RDQIO};
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_QUAD_SPI_WAIT_READY_1;
+            end
+          end
+
+          READ_QUAD_SPI_WAIT_READY_1: begin
+            // Wait for spi_host to be ready (command queue not busy)
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
+              read_state_d = READ_QUAD_SPI_SEND_CMD_1;
+            end
+          end
+
+          READ_QUAD_SPI_SEND_CMD_1: begin
+            // Send command to spi_host : send quad read command to flash 
+            // COMMAND register format:
+            //   [31:29] = Reserved
+            //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0 = standard)
+            //   [24]    = CSAAT (1 = keep CS asserted for next command)
+            //   [23:0]  = Length-1 (0 = 1 byte) (FC_RDQIO is 1 byte command)
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = {
+              3'h0, 2'h2, 2'h0, 1'h1, 24'h0
+            }; // Reserved + Direction + Speed + Csaat + Length
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_QUAD_SPI_SEND_CMD_1;
+            end
+          end
+
+          READ_QUAD_SPI_CHECK_TX_FIFO_2: begin
+            // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
+            if (external_spi_host_hw2reg_status_i.txqd.d < SPI_FLASH_TX_FIFO_DEPTH[7:0]) begin
+              read_state_d = READ_QUAD_SPI_FILL_TX_FIFO_2;
+            end
+          end
+
+          READ_QUAD_SPI_FILL_TX_FIFO_2: begin
+            // Write flash address in tx_fifo
+            spi_host_reg_req_offset  = SPI_HOST_TXDATA_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata =  {
+              (bitfield_byteswap32({ 8'h00 , flash_addr_q }) >> 8) | 32'hff000000
+            };
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_QUAD_SPI_WAIT_READY_2;
+            end
+          end
+
+          READ_QUAD_SPI_WAIT_READY_2: begin
+            // Wait for spi_host to be ready (command queue not busy)
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
+              read_state_d = READ_QUAD_SPI_SEND_CMD_2;
+            end
+          end
+
+          READ_QUAD_SPI_SEND_CMD_2: begin
+            // Send command to spi_host : send address to flash 
+            // COMMAND register format:
+            //   [31:29] = Reserved
+            //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (2 = quad spi)
+            //   [24]    = CSAAT (1 = keep CS asserted for next command)
+            //   [23:0]  = Length-1 (3 = ff + 3 bytes of address)
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = {
+              3'h0, 2'h2, 2'h2, 1'h1, 24'h3
+            }; // Reserved + Direction + Speed + Csaat + Length
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_QUAD_SPI_WAIT_READY_3;
+            end
+          end
+
+          READ_QUAD_SPI_WAIT_READY_3: begin
+            // Wait for spi_host to be ready (command queue not busy)
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
+              read_state_d = READ_QUAD_SPI_SEND_CMD_3;
+            end
+          end
+
+          READ_QUAD_SPI_SEND_CMD_3: begin
+            // Send command to spi_host : execute dummy flash read cycles
+            // COMMAND register format:
+            //   [31:29] = Reserved
+            //   [28:27] = Direction (0 = DUMMY reads)
+            //   [26:25] = Speed (2 = quad spi)
+            //   [24]    = CSAAT (1 = keep CS asserted for next command)
+            //   [23:0]  = Length-1 (3 = 4 dummy wait cycles)
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            spi_host_reg_req_o.wdata = {
+              3'h0, 2'h0, 2'h2, 1'h1, 24'h3
+            }; // Reserved + Direction + Speed + Csaat + Length
+            // Next state evaluation
+            if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
+              read_state_d = READ_QUAD_SPI_WAIT_READY_4;
+            end
+          end
+
+          READ_QUAD_SPI_WAIT_READY_4: begin
+            // Wait for spi_host to be ready (command queue not busy)
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
+              read_state_d = READ_QUAD_SPI_SEND_CMD_4;
+            end
+          end
+
+          READ_QUAD_SPI_SEND_CMD_4: begin
+            // Send command to spi_host : store flash content into rx_fifo from flash
+            // COMMAND register format:
+            //   [31:29] = Reserved
+            //   [28:27] = Direction (1 = RX only)
+            //   [26:25] = Speed (2 = quad spi)
+            //   [24]    = CSAAT (0 = release CS after transfer, no more commands to send)
+            //   [23:0]  = Length-1 (See comments below)
+            spi_host_reg_req_offset  = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_o.write = 1'b1;
+            spi_host_reg_req_o.valid = 1'b1;
+            if (rnw_q) begin
+              // READ: receive a number of bytes specified by axi (beat_size) (up to 8 bytes)
+              spi_host_reg_req_o.wdata = {
+                3'h0, 2'h1, 2'h2, 1'h0,  {16'h0 , (8'h0 | (beat_size_q - 1'h1))}
+              }; // Empty + Direction + Speed + Csaat + Length
+            end
+            if (~rnw_q) begin
+              // WRITE: read full sector (4096 bytes)
+              spi_host_reg_req_o.wdata = {
+                3'h0, 2'h1, 2'h2, 1'h0, {11'b0, SE_BSIZE - 1'h1}
               }; // Empty + Direction + Speed + Csaat + Length
               word_count_d = 0; // restart the word counter to count up to one sector
             end
@@ -1144,10 +1320,11 @@ int actual_poweron_wait_cycles;
           end
 
           FWAIT_SPI_SEND_CMD_1: begin
-            // Send command to spi_host : send RSR1 command to flash
+            // Send command to spi_host : send status read command to flash
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0 = standard)
             //   [24]    = CSAAT (1 = keep CS asserted for next command)
             //   [23:0]  = Length-1 (0 = 1 byte) (FC_RSR1 is 1 byte command)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
@@ -1174,6 +1351,7 @@ int actual_poweron_wait_cycles;
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (1 = RX only)
+            //   [26:25] = Speed (0 = standard)
             //   [24]    = CSAAT (0 = release CS after transfer, no more commands to send)
             //   [23:0]  = Length-1 (0 = 1 byte)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
@@ -1335,6 +1513,7 @@ int actual_poweron_wait_cycles;
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0 = standard)
             //   [24]    = CSAAT (0 = release CS after, WE is standalone command)
             //   [23:0]  = Length-1 (0 = 1 byte)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
@@ -1382,6 +1561,7 @@ int actual_poweron_wait_cycles;
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0 = standard)
             //   [24]    = CSAAT (0 = release CS after transfer, no more commands to send)
             //   [23:0]  = Length-1 (3 = 4 bytes: 1 cmd + 3 addr bytes)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
@@ -1655,6 +1835,7 @@ int actual_poweron_wait_cycles;
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0 = standard)
             //   [24]    = CSAAT (0 = release CS after, WE is standalone command)
             //   [23:0]  = Length-1 (0 = 1 byte)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
@@ -1677,6 +1858,9 @@ int actual_poweron_wait_cycles;
           end
 
           WRITE_PP_FILL_TX_FIFO: begin
+            logic [12:0] OPCODE;
+            // page program speed is decided by quadspi_en_i (from external top reg)
+            OPCODE = quadspi_en_i ? FC_PPQ : FC_PP;
             // Write page program command + page address in tx_fifo
             spi_host_reg_req_offset = SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
@@ -1684,7 +1868,7 @@ int actual_poweron_wait_cycles;
             // Compute page address: sector base + sector offset + page offset
             spi_host_reg_req_o.wdata = bitfield_byteswap32(
 											                      {8'h0 , flash_addr_q + (page_count_q << 8) }
-										                        ) | {19'h0, FC_PP};
+										                        ) | {19'h0, OPCODE};
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               write_state_d = WRITE_PP_WAIT_READY;
@@ -1703,6 +1887,7 @@ int actual_poweron_wait_cycles;
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0 = standard)
             //   [24]    = CSAAT (1 = keep CS asserted for next command)
             //   [23:0]  = Length-1 (3 = 4 bytes: 1 cmd + 3 addr)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
@@ -1779,17 +1964,20 @@ int actual_poweron_wait_cycles;
           end
 
           WRITE_PP_SEND_CMD_2: begin
+            logic [1:0] SPEED;
+            SPEED = quadspi_en_i ? 2'h2 : 2'h0;
             // Send command to spi_host: send direction and length of write operation
             // COMMAND register format:
             //   [31:29] = Reserved
             //   [28:27] = Direction (2 = TX only)
+            //   [26:25] = Speed (0/2 = standard/quad spi)
             //   [24]    = CSAAT (0 = release CS after transfer, no more commands to send)
             //   [23:0]  = Length-1 (255 = 256 bytes = 1 page)
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             spi_host_reg_req_o.wdata = {
-              3'h0, 2'h2, 2'h0, 1'h0, {11'b0, PAGE_BSIZE - 1'h1}
+              3'h0, 2'h2, SPEED, 1'h0, {11'b0, PAGE_BSIZE - 1'h1}
             };  // Empty + Direction + Speed + Csaat + Length
             // Next state evaluation
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
