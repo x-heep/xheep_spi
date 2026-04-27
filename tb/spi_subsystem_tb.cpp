@@ -1,5 +1,3 @@
-// TODO : also check reg_rsp.error
-
 // ================================ INCLUDES ================================
 
 // verilator libraries

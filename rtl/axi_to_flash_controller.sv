@@ -20,23 +20,6 @@
     rx_fifo can be smaller because we read a flash word as soon as it enters the fifo, even if we demand all 1024 sector words in one command
     tx_fifo however requires first all 64 page program words to be in the tx_fifo, then they are released out to the flash after a command to spi_host
 
-  TODO : 
-            - add more blank space in the FSM
-            - add some comments from original w25q128jw_controller ? Improve readability
-            - between first and second sector write of the single beat might not be required to FWAIT , maybe even between beats
-            - correct code to avioid WIDTH warnings, allowing waiver file reduction.
-            - rxwm is set to one multiple times, 1 is enough?
-            - write_skip still goes through the flash status read, bypass that too?
-            - merge modify branches
-            - are more spi_host ready checks required?
-
-  TODO : at last, remove verilator scope signals in tc_sram (and also spiflash)
-
-  TODO : can the sector READ performance iprove if instead of reading a word at a time we read N words where N is the maximum common denominator between sector size and rx_fifo size in 32b words?
-
-  // MORE CHANGES //
-  1) dual and quad spi support (thus dummy cycles) (register cfg + states)
-
  */
  
 module axi_to_flash_controller
@@ -887,7 +870,7 @@ int actual_poweron_wait_cycles;
 
           READ_SPI_WAIT_READY_1: begin
             // Wait for spi_host to be ready (command queue not busy)
-            if (external_spi_host_hw2reg_status_i.ready.d) begin //TODO : update similar states checking this
+            if (external_spi_host_hw2reg_status_i.ready.d) begin
               read_state_d = READ_SPI_SEND_CMD_1;
             end
           end
@@ -1435,7 +1418,7 @@ int actual_poweron_wait_cycles;
                       end
                     end
                   end
-                  default: begin  // TODO double check these if begin-end
+                  default: begin
                   end
                 endcase
               end else begin
