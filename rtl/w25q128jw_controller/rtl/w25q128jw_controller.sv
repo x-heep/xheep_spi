@@ -834,6 +834,8 @@ module w25q128jw_controller
           end
 
           READ_BODY_SEND_CMD: begin
+            dma_size = (reg2hw.length.q - {30'h0, head_bytes_q}) >> 2;
+
             spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
@@ -841,7 +843,7 @@ module w25q128jw_controller
               SPI_DIR_RX,
               reg2hw.control.quad.q ? SPI_SPEED_QUAD : SPI_SPEED_STD,
               (tail_bytes_q != 0),  // Another command after only if tail
-              ((dma_size << 2) - 1'h1)
+              ((dma_size << 2) - 32'h1)
             );
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
