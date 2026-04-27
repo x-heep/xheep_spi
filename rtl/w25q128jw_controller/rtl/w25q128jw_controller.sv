@@ -178,7 +178,7 @@ module w25q128jw_controller
     READ_SPI_QUAD_WAIT_READY_DUMMY,  // Wait for SPI Host
     READ_SPI_SEND_CMD_5_QUAD,        // Send RX command (quad mode)
 
-    READ_TRANS,            // Wait for DMA transfer complete (write path only)
+    READ_SECTOR_TRANS,            // Wait for DMA transfer complete (write path only)
     READ_HEAD_TRANS,       // Wait for head DMA completion
     READ_BODY_REGS,        // Configure body DMA
     READ_BODY_WAIT_READY,  // Wait for SPI Host
@@ -327,6 +327,7 @@ module w25q128jw_controller
   function automatic void complete_read();
     read_state_d            = READ_IDLE;
     top_state_d             = TOP_IDLE;
+
     hw2reg.control.start.de = 1'b1;
     hw2reg.control.start.d  = 1'b0;
     hw2reg.intr_status.de   = 1'b1;
@@ -632,7 +633,7 @@ module w25q128jw_controller
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               if (!reg2hw.control.rnw.q) begin
-                read_state_d = READ_TRANS;  // Write path: full sector DMA
+                read_state_d = READ_SECTOR_TRANS;  // Write path: full sector DMA
               end else if (head_bytes_q != 0) begin
                 read_state_d = READ_HEAD_TRANS;
               end else if ((reg2hw.length.q >> 2) != 0) begin
@@ -736,7 +737,7 @@ module w25q128jw_controller
           end
 
           READ_SPI_SEND_CMD_5_QUAD: begin
-            spi_host_reg_req_offset  = SPI_HOST_COMMAND_OFFSET;
+            spi_host_reg_req_offset = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
 
@@ -773,7 +774,7 @@ module w25q128jw_controller
 
             if (spi_host_reg_rsp_i.ready && ~spi_host_reg_rsp_i.error) begin
               if (!reg2hw.control.rnw.q) begin
-                read_state_d = READ_TRANS;  // Write path: full sector DMA
+                read_state_d = READ_SECTOR_TRANS;  // Write path: full sector DMA
               end else if (head_bytes_q != 0) begin
                 read_state_d = READ_HEAD_TRANS;
               end else if ((reg2hw.length.q >> 2) != 0) begin
@@ -785,7 +786,7 @@ module w25q128jw_controller
           end
 
           // ============== WAIT FOR DMA COMPLETION ==============
-          READ_TRANS: begin
+          READ_SECTOR_TRANS: begin
             if (dma_done_i[0]) begin  // DMA channel 0 done signal
               // ===== WRITE OPERATION: Proceed to FWAIT =====
               read_state_d  = READ_IDLE;
