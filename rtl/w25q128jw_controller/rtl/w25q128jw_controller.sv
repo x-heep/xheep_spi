@@ -103,7 +103,7 @@ module w25q128jw_controller
   function automatic void set_dma_regs(
       input logic [31:0] src_ptr, input logic [31:0] dst_ptr, input logic [31:0] src_ptr_inc,
       input logic [31:0] dst_ptr_inc, input logic [1:0] src_data_type, dst_data_type,
-      input logic [31:0] rx_tx_trigger_slot, input logic [31:0] slot_wait_counter,
+      input logic [31:0] rx_trigger_slot, input logic [31:0] slot_wait_counter,
       input logic [15:0] size_d1);
     // Set DMA source pointer
     external_dma_hw2reg_o.src_ptr.de = 1'b1;
@@ -125,7 +125,7 @@ module w25q128jw_controller
     external_dma_hw2reg_o.dst_data_type.d = dst_data_type;
     // Set DMA trigger slots (See sw/device/lib/drivers/dma/dma.h for trigger slot mapping)
     external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
-    external_dma_hw2reg_o.slot.rx_trigger_slot.d = rx_tx_trigger_slot;
+    external_dma_hw2reg_o.slot.rx_trigger_slot.d = rx_trigger_slot;
     external_dma_hw2reg_o.slot.tx_trigger_slot.de = 1'b1;
     external_dma_hw2reg_o.slot.tx_trigger_slot.d = '0;
     // Set slot wait counter
