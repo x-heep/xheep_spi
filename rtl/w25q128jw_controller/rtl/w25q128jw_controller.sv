@@ -102,7 +102,7 @@ module w25q128jw_controller
 
   function automatic void set_dma_regs(
       input logic [31:0] src_ptr, input logic [31:0] dst_ptr, input logic [31:0] src_ptr_inc,
-      input logic [31:0] dst_ptr_inc, input logic [1:0] data_type,
+      input logic [31:0] dst_ptr_inc, input logic [1:0] src_data_type, dst_data_type,
       input logic [31:0] rx_tx_trigger_slot, input logic [31:0] slot_wait_counter,
       input logic [15:0] size_d1);
     // Set DMA source pointer
@@ -119,10 +119,10 @@ module w25q128jw_controller
     external_dma_hw2reg_o.dst_ptr_inc_d1.d = dst_ptr_inc;
     // Set source data type (See hw/vendor/xheep_dma/data/dma.hjson for encoding)
     external_dma_hw2reg_o.src_data_type.de = 1'b1;
-    external_dma_hw2reg_o.src_data_type.d = data_type;
+    external_dma_hw2reg_o.src_data_type.d = src_data_type;
     // Set destination data type: 1 byte
     external_dma_hw2reg_o.dst_data_type.de = 1'b1;
-    external_dma_hw2reg_o.dst_data_type.d = data_type;
+    external_dma_hw2reg_o.dst_data_type.d = dst_data_type;
     // Set DMA trigger slots (See sw/device/lib/drivers/dma/dma.h for trigger slot mapping)
     external_dma_hw2reg_o.slot.rx_trigger_slot.de = 1'b1;
     external_dma_hw2reg_o.slot.rx_trigger_slot.d = rx_tx_trigger_slot;
@@ -489,7 +489,7 @@ module w25q128jw_controller
                 set_dma_regs(
                     SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
                     32'h0, 32'h1,  // src_inc=0 (FIFO), dst_inc=1 (SRAM)
-                    2'h2,  // 8-bit data type
+                    2'h0, 2'h2,  // src_data_type=32-bit (FIFO), dst_data_type=8-bit (SRAM)
                     'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                     {14'h0, head_bytes_q});
               end else begin
@@ -498,7 +498,7 @@ module w25q128jw_controller
                   set_dma_regs(
                       SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
                       32'h0, 32'h4,  // src_inc=0 (FIFO), dst_inc=4 (word)
-                      2'h0,  // 32-bit data type
+                      2'h0, 2'h0,  // src_data_type=32-bit (FIFO), dst_data_type=32-bit (SRAM)
                       'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                       dma_size_d[15:0]);
                 end else begin
@@ -506,7 +506,7 @@ module w25q128jw_controller
                   set_dma_regs(
                       SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET}, reg2hw.s_address.q,
                       32'h0, 32'h1,  // src_inc=0 (FIFO), dst_inc=1 (byte)
-                      2'h2,  // 8-bit data type
+                      2'h0, 2'h2,  // src_data_type=32-bit (FIFO), dst_data_type=8-bit (SRAM)
                       'h4, reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                       {14'h0, tail_bytes_q});
                 end
@@ -517,7 +517,7 @@ module w25q128jw_controller
 
               set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
                            reg2hw.s_address.q, 32'h0, 32'h4,  // src_inc=0 (FIFO), dst_inc=4 (word)
-                           2'h0,  // 32-bit data type
+                           2'h0, 2'h0,  // src_data_type=32-bit (FIFO), dst_data_type=32-bit (SRAM)
                            'h4,
                            reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                            dma_size_d[15:0]);
@@ -812,7 +812,7 @@ module w25q128jw_controller
               set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
                            reg2hw.s_address.q + md_offset_q, 32'h0,
                            32'h4,  // src_inc=0 (FIFO), dst_inc=4 (word)
-                           2'h0,  // 32-bit data type
+                           2'h0, 2'h0,  // src_data_type=32-bit (FIFO), dst_data_type=32-bit (SRAM)
                            'h4,
                            reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                            dma_size_q[15:0]);
@@ -864,7 +864,7 @@ module w25q128jw_controller
               set_dma_regs(SPI_FLASH_START_ADDRESS + {25'b0, SPI_HOST_RXDATA_OFFSET},
                            reg2hw.s_address.q + md_offset_q, 32'h0,
                            32'h1,  // src_inc=0 (FIFO), dst_inc=1 (byte)
-                           2'h2,  // 8-bit data type
+                           2'h0, 2'h2,  // src_data_type=32-bit (FIFO), dst_data_type=8-bit (SRAM)
                            'h4,
                            reg2hw.dma_slot_wait_counter.q,  // slot_wait_counter to write to DMA
                            {14'h0, tail_bytes_q});
@@ -1280,7 +1280,7 @@ module w25q128jw_controller
               set_dma_regs(reg2hw.md_address.q + md_offset_q,
                            reg2hw.s_address.q + {20'h0, sector_offset_q}, 32'h1,
                            32'h1,  // 1-byte transfer
-                           2'h2,  // Data type: 2 = 8-bit
+                           2'h0, 2'h2,  // src_data_type=32-bit (MD), dst_data_type=8-bit (SRAM)
                            'h0, 'h0, {14'h0, head_bytes_q});
             end else begin
               // No head to transfer, go directly to body
@@ -1317,7 +1317,7 @@ module w25q128jw_controller
               set_dma_regs(reg2hw.md_address.q + md_offset_q,
                            reg2hw.s_address.q + {20'h0, sector_offset_q}, 32'h4,
                            32'h4,  // 4-byte increment for word transfers
-                           2'h0,  // Data type: 0 = 32-bit
+                           2'h0, 2'h0,  // src_data_type=32-bit (MD), dst_data_type=32-bit (SRAM)
                            'h0, 'h0, dma_size_d[15:0]);
 
               modify_state_d = MODIFY_BODY_TRANS;
@@ -1367,7 +1367,7 @@ module w25q128jw_controller
               set_dma_regs(reg2hw.md_address.q + md_offset_q,
                            reg2hw.s_address.q + {20'h0, sector_offset_q}, 32'h1,
                            32'h1,  // 1-byte transfer
-                           2'h2,  // Data type: 2 = 8-bit
+                           2'h0, 2'h2,  // src_data_type=32-bit (MD), dst_data_type=8-bit (SRAM)
                            'h0, 'h0, tail_bytes_q);
 
               modify_state_d = MODIFY_TAIL_TRANS;
