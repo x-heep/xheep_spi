@@ -195,7 +195,7 @@ spi_subsystem #(
     .DataWidth                    (DataWidth),
     .AddrWidth                    (AddrWidth),
     .ByteOrder                    (ByteOrder),
-    .ClockFrequencyMAX_MHz        ((core_v_mini_mcu_pkg::CLK_F)/1e6),
+    .ClockFrequencyMAX_MHz        ((core_v_mini_mcu_pkg::MAX_CLK_F)/1e6),
     .axi_req_t                    (axi_req_t),
     .axi_resp_t                   (axi_resp_t),
     .reg_req_t                    (reg_pkg::reg_req_t),
