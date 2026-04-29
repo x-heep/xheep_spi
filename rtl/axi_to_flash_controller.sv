@@ -77,8 +77,7 @@ module axi_to_flash_controller
   // ------------------------------------------------ AXI interface renaming ------------------------------------------------ //
   localparam int lenDW = 8;
   localparam int sizeDW = 3;
-  localparam int burstDW = 2;
-  localparam int respDW = 2;
+  
   logic [AddrWidth-1:0]     aw_addr;
   logic [sizeDW-1:0]        aw_size;
   logic [lenDW-1:0]         aw_len;
