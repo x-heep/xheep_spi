@@ -25,7 +25,6 @@ filesets:
       - rtl/spi_subsystem_reg_top.sv
       - rtl/axi_to_flash_beat_queues.sv
       - rtl/axi_to_flash_controller.sv
-      - rtl/spi_subsystem.sv
     file_type: systemVerilogSource
 
   files_verilator_waiver:
@@ -38,6 +37,11 @@ filesets:
     files:
       - tb/tc_sram.sv
       - tb/sram_wrapper.sv
+    file_type: systemVerilogSource
+
+  files_toplvl_rtl:
+    files:
+      - rtl/spi_subsystem.sv 
     file_type: systemVerilogSource
 
   files_verilator_tb:
@@ -55,6 +59,7 @@ targets:
   sim:
     filesets:
       - files_rtl
+      - files_toplvl_rtl
       - files_scratchpad_tb
       - files_verilator_tb
       - files_verilator_waiver
