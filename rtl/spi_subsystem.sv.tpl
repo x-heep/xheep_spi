@@ -7,7 +7,6 @@
 %>
 
 module spi_subsystem
-  import core_v_mini_mcu_pkg::*;
   import spi_host_reg_pkg::*;
 #(
     parameter int DataWidth = 64,
