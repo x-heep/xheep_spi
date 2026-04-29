@@ -26,9 +26,6 @@ filesets:
       - rtl/axi_to_flash_beat_queues.sv
       - rtl/axi_to_flash_controller.sv
       - rtl/spi_subsystem.sv
-      - tb/tc_sram.sv
-      - tb/sram_wrapper.sv
-      - tb/yosys_spiflash.sv
     file_type: systemVerilogSource
 
   files_verilator_waiver:
@@ -37,8 +34,15 @@ filesets:
       - lint/spi_subsystem.vlt
     file_type: vlt
 
+  files_scratchpad_tb:
+    files:
+      - tb/tc_sram.sv
+      - tb/sram_wrapper.sv
+    file_type: systemVerilogSource
+
   files_verilator_tb:
     files:
+      - tb/yosys_spiflash.sv: {file_type: systemVerilogSource}
       - tb/spi_subsystem_tb_wrapper.sv: {file_type: systemVerilogSource}
       - tb/spi_subsystem_tb.cpp: {file_type: cppSource}
 
@@ -51,6 +55,7 @@ targets:
   sim:
     filesets:
       - files_rtl
+      - files_scratchpad_tb
       - files_verilator_tb
       - files_verilator_waiver
     toplevel: spi_subsystem_tb_wrapper
