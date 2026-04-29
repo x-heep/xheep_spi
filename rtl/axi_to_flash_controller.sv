@@ -23,10 +23,8 @@
  */
  
 module axi_to_flash_controller
-  import core_v_mini_mcu_pkg::*;
   import spi_host_reg_pkg::*;
 #(
-
   localparam int MaxBeats = 17,
   localparam int MaxBeatsDW = sizeInBits(MaxBeats+1),
   localparam int PageCountDW = sizeInBits(SE_PSIZE+1),
@@ -480,7 +478,10 @@ module axi_to_flash_controller
 
   // reg_req.addr to spi_host -> only the offset changes
   logic [spi_host_reg_pkg::BlockAw-1:0] spi_host_reg_req_offset;
-  assign spi_host_reg_req_o.addr = core_v_mini_mcu_pkg::SPI_FLASH_START_ADDRESS + {{(64 - spi_host_reg_pkg::BlockAw){1'b0}}, spi_host_reg_req_offset};
+  //assign spi_host_reg_req_o.addr = core_v_mini_mcu_pkg::SPI_FLASH_START_ADDRESS + {{(64 - spi_host_reg_pkg::BlockAw){1'b0}}, spi_host_reg_req_offset};
+  // is the offset from the package actaully useful? 
+  localparam [AddrWidth-1:0] SPI_FLASH_START_ADDRESS = 0;
+  assign spi_host_reg_req_o.addr = SPI_FLASH_START_ADDRESS + {{(64 - spi_host_reg_pkg::BlockAw){1'b0}}, spi_host_reg_req_offset};
 
 // To shorten the simulation and to allow a smaller watchdog in the testbench, reduce the number of cycles waited inside the power-on rutine
 int actual_poweron_wait_cycles;

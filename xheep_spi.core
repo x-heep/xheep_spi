@@ -16,7 +16,6 @@ filesets:
     files:
       - rtl/obi_pkg.sv
       - rtl/reg_pkg.sv
-      - rtl/core_v_mini_mcu_pkg.sv
       - rtl/spi_subsystem_reg_pkg.sv
       # w25_ctr ignored because dma_reg_pkg.sv not existing yet
       # - rtl/w25q128jw_controller/rtl/w25q128jw_controller_reg_pkg.sv

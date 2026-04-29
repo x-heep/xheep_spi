@@ -3,15 +3,14 @@
 `include "axi/typedef.svh"
 
 module spi_subsystem_tb_wrapper 
-  import core_v_mini_mcu_pkg::*;
 #(
   localparam int lenDW = 8,
   localparam int sizeDW = 3,
   localparam int burstDW = 2,
   localparam int respDW = 2,
-  localparam int DataWidth = core_v_mini_mcu_pkg::Parallelism,
+  localparam int DataWidth = 64,
   localparam int DataBytes = DataWidth/8,
-	localparam int AddrWidth = core_v_mini_mcu_pkg::Parallelism,
+	localparam int AddrWidth = 64,
   localparam int ByteOrder = 1,
   localparam int RegDataWidth = 32
 )(
@@ -195,7 +194,7 @@ spi_subsystem #(
     .DataWidth                    (DataWidth),
     .AddrWidth                    (AddrWidth),
     .ByteOrder                    (ByteOrder),
-    .ClockFrequencyMAX_MHz        ((core_v_mini_mcu_pkg::MAX_CLK_F)/1e6),
+    .ClockFrequencyMAX_MHz        (1e3),
     .axi_req_t                    (axi_req_t),
     .axi_resp_t                   (axi_resp_t),
     .reg_req_t                    (reg_pkg::reg_req_t),

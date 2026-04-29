@@ -7,7 +7,6 @@
 %>
 
 module spi_subsystem
-  import spi_host_reg_pkg::*;
 #(
     parameter int DataWidth = 64,
     parameter int AddrWidth = 64,
