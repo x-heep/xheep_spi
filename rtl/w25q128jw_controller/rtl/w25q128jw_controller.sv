@@ -467,9 +467,9 @@ module w25q128jw_controller
               end else begin
                 tail_bytes_d = reg2hw.s_address.q[1:0] + reg2hw.length.q[1:0];
               end
-
-              md_offset_d = 32'h0;
             end
+
+            md_offset_d = 32'h0;
 
             top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
             dma_init_return_d = RETURN_READ;  // Return here after DMA init
@@ -546,8 +546,8 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             if (reg2hw.control.rnw.q) begin
-              // READ: Use word-aligned flash address from F_ADDRESS register
-              flash_address = reg2hw.f_address.q & 32'h00fffffc;
+              // READ: Use exact flash address from F_ADDRESS register
+              flash_address = reg2hw.f_address.q & 32'h00ffffff;
               spi_host_reg_req_o.wdata = (((bitfield_byteswap32(flash_address)) >> 8) << 8) |
                   {19'h0, FC_RD};
             end else begin
