@@ -469,7 +469,10 @@ module w25q128jw_controller
               end
             end
 
-            md_offset_d = 32'h0;
+            // Reset md_offset for: all reads or first sector of a new write
+            if (reg2hw.control.rnw.q || sector_iter_offset_q == 32'h0) begin
+              md_offset_d = 32'h0;
+            end
 
             top_state_d       = TOP_DMA_INIT;  // Go to DMA init FSM
             dma_init_return_d = RETURN_READ;  // Return here after DMA init
