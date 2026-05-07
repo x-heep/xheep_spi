@@ -101,7 +101,7 @@ module axi_to_flash_controller
   logic                     r_last;
   logic                     r_valid;
   logic                     r_ready;
-  // assignments
+  // Assignments
   always_comb begin
     aw_addr  = axi_req_i.aw.addr;
     aw_size  = axi_req_i.aw.size;
