@@ -6,7 +6,7 @@
   Uses a local scratchpad memory as sector buffer and a fifo as queue for AXI beats.
   RAM is not involved.
 
-  axi_burst = INC , always.
+  ax_burst = INC , always.
  
   Author : Alessandro Barocci
  
@@ -50,10 +50,10 @@ module axi_to_flash_controller
   input logic clk_i,
   input logic rst_ni,
 
-  // Enable by xspi register
+  // Enable from spi_subsystem register
   input logic en_i,
 
-  // Enable power-on subrutine
+  // Enable power-on sub-rutine
   input logic poweron_en_i,
 
   // Enable quad spi
@@ -63,7 +63,7 @@ module axi_to_flash_controller
   output reg_req_t spi_host_reg_req_o,
   input  reg_rsp_t spi_host_reg_rsp_i,
 
-  // SPI HW2REG status register direct access
+  // spi_host hw2reg status register direct access
   input spi_host_reg_pkg::spi_host_hw2reg_status_reg_t external_spi_host_hw2reg_status_i,
 
   // AXI interface
@@ -153,7 +153,7 @@ module axi_to_flash_controller
                           SE_BSIZE = 13'h1000,                        // Sector size in bytes
                           PAGE_WSIZE = 13'h40,                        // Page size in words
                           PAGE_BSIZE = 13'h100;                       // Page size in bytes
-  localparam int          SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));  // used for signa declaration
+  localparam int          SE_WSIZE_DW = sizeInBits(32'(SE_WSIZE+1));  // Used for signa declaration
   localparam int          SE_PSIZE = 32'(SE_WSIZE) / 32'(PAGE_WSIZE); // Sector size in pages
   // --------------------------------------------------------------------------------
 
