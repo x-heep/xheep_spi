@@ -36,7 +36,7 @@ module axi_to_flash_controller
   localparam int PowerOnWaitCyclesDW = sizeInBits(PowerOnWaitCycles+1),
   localparam int SPI_FLASH_TX_FIFO_DEPTH = spi_host_reg_pkg::TxDepth,
   parameter int ClockFrequencyMAX_MHz = 1e3,
-  parameter logic ByteOrder = 1, // 1 == Little Endian , 0 == Big Endian  ; @ 0 , beat_queues swap bytes.
+  parameter logic ByteOrder = 1, // 1 == Little Endian , 0 == Big Endian  ; if 0 then beat_queues will swap bytes.
   parameter int AddrWidth = 64,
   parameter int FlashAddrW = 24,
   parameter int DataWidth = 64,
