@@ -1,23 +1,23 @@
 /*
  
   axi_to_flash_controller.sv
-  Manager for W25Q128JW flash memory , AXI Subordinate.
+  Manager for SPI controller , AXI Subordinate.
  
-  Uses a local scratchpad memory as sector buffer and a fifo as queue for AXI beats.
-  RAM is not involved.
+  Uses a local scratchpad memory as sector buffer and two queues for AXI write and read beats.
+  RAM is not currently involved.
 
   ax_burst = INC , always.
  
   Author : Alessandro Barocci
  
-  Based on XHEEP's w25q128jw_controller.sv
+  Based on XHEEP's w25q128jw_controller.sv for what regards the SPI side
 
   FLASH DATASHEET : https://www.mouser.com/datasheet/2/949/W25Q128JW_RevB_11042019-1761358.pdf?srsltid=AfmBOopmMreOM8jLZ_O6yIwuR8ep6A4olsQW1t1oNTz8bvuKFsv5xtqs
   AXI PROTOCOL : https://developer.arm.com/documentation/ihi0022/latest
 
   CONDITION : 
     spi_host tx_fifo must be at least 64 words deep
-    rx_fifo can be smaller because we read a flash word as soon as it enters the fifo, even if we demand all 1024 sector words in one command
+    rx_fifo can be smaller because a flash word is read as soon as it enters the fifo, even if all 1024 sector words are requested in one command
     tx_fifo however requires first all 64 page program words to be in the tx_fifo, then they are released out to the flash after a command to spi_host
 
  */
@@ -51,10 +51,10 @@ module axi_to_flash_controller #(
   // Enable from spi_subsystem register
   input logic en_i,
 
-  // Enable power-on sub-rutine
+  // Enable power-on subrutine from spi_subsystem register
   input logic poweron_en_i,
 
-  // Enable quad spi
+  // Enable quad spi from spi_subsystem register
   input logic quadspi_en_i,
 
   // Master ports to the SPI HOST
@@ -126,7 +126,7 @@ module axi_to_flash_controller #(
   end
   // ------------------------------------------------------------------------------------------------------------------------ //
 
-  // Assert data width flag
+  // Assert data width flag - used to indicate the host system's parallelism through a logic rather than a parameter
   logic [DataWidth-1:0] A;
   logic datawidth_is_64_n32;
   always_comb begin
@@ -165,7 +165,7 @@ module axi_to_flash_controller #(
     };
   endfunction
 
-  // Function to compute data size in bits
+  // This function returns the number of bits required to represent a integer number in binary
   function automatic int sizeInBits (input int value);
     int i;
     if (value > 1) begin
@@ -180,27 +180,30 @@ module axi_to_flash_controller #(
 
   /*
                                             ────────────────────────────────────────
-                                                       SFM STATE DEFINITION
+                                                       FSM STATE DEFINITION
                                             
   */
 
-  // ============================================== TOP SFM ============================================== //
-  // Each state is a sub-sfm
-  typedef enum logic [sizeInBits(9)-1:0] {
+  // ============================================== TOP FSM ============================================== //
+  // Each state is a sub-fsm
+  typedef enum logic [sizeInBits(9)-1:0] {  // "9" is the number of states in TOP_FSM
+
+                  // Each top_state enables a SUB-FSM
+                  
     TOP_IDLE,     // Wait for valid AXI request
     TOP_AXIREQ,   // Memorize data from AXI manager
-    TOP_POWERON,  // Issue the power-on command to the flash and wait cycles before operating, if enabled.
-    TOP_READ,     // Store beats into queue or store sector into sector buffer, from flash.
+    TOP_POWERON,  // Issue the power-on command to the flash and wait cycles before operating, if enabled and not yet done since last reset.
+    TOP_READ,     // READ : Store read beats from flash into queue. WRITE: store current write beat's sector from flash into sector buffer.
     TOP_FWAIT,    // Wait for flash ready status.
     TOP_ERASE,    // Erase flash sector
     TOP_MODIFY,   // Modify sector buffer with write data
     TOP_WRITE,    // Page program the flash sector with modified buffer content
-    TOP_AXIRESP   // Respond to AXI master
+    TOP_AXIRESP   // Respond to AXI Manager
   } top_state_e;
   // ===================================================================================================== //
 
 
-  // =========================================== AXIREQ SFM ============================================== //
+  // =========================================== AXIREQ FSM ============================================== //
   // Handles AXI request
   typedef enum logic [sizeInBits(4)-1:0] {
     AXIREQ_IDLE,       // Clear beat queues
@@ -211,8 +214,8 @@ module axi_to_flash_controller #(
   // ===================================================================================================== //
 
 
-  // =========================================== POWERON SFM ============================================== //
-  // Sends the power on command to the flash. Executed once if enabled and if not yet executed since reset.
+  // =========================================== POWERON FSM ============================================== //
+  // Sends the power on command to the flash. Executed if enabled and not once done since reset.
   typedef enum logic [sizeInBits(6)-1:0] {
     POWERON_IDLE,                 
     POWERON_SPI_CHECK_TX_FIFO,    // Check whether tx_fifo has room
@@ -224,7 +227,7 @@ module axi_to_flash_controller #(
   // ===================================================================================================== //
 
 
-  // =========================================== READ SFM ================================================ //
+  // =========================================== READ FSM ================================================ //
   // Handles flash read operation
   typedef enum logic [sizeInBits(26)-1:0] {
     READ_IDLE,               // In write, skip sector read if redundant. Evaluate flash access address
@@ -253,16 +256,16 @@ module axi_to_flash_controller #(
     READ_QUAD_SPI_SEND_CMD_4,           // Send command to spi_host to receive data from flash into rx_fifo (at quad speed)
 
     READ_WAIT_RXWM,          // Check whether data is present in rx_fifo
-    READ_W_SECTOR_STORE,     // Only write : store the beat's sector inside the local sector buffer, word by word.
-    READ_R_BEAT_PUSH_DW32,   // Only read , 32 bits : store current beat inside local buffer
-    READ_R_BEAT_PUSH_DW64_1, // Only read , 64 bits : store current beat inside local buffer
-    READ_R_BEAT_PUSH_DW64_2, // Only read , 64 bits : store current beat inside local buffer  
-    READ_R_BEAT_PUSH_FIN     // Only read , store current beat inside rd_beat_queue
+    READ_W_SECTOR_STORE,     // Only write - store the beat's sector inside the local sector buffer, word by word.
+    READ_R_BEAT_PUSH_DW32,   // Only read & 32 bits - store current beat inside a register
+    READ_R_BEAT_PUSH_DW64_1, // Only read & 64 bits - store current beat inside a register (1st half)
+    READ_R_BEAT_PUSH_DW64_2, // Only read & 64 bits - store current beat inside a register (2nd half)
+    READ_R_BEAT_PUSH_FIN     // Only read - store current beat inside rd_beat_queue from previous register
   } read_state_e;
   // ===================================================================================================== //
 
 
-  // =========================================== FWAIT SFM ================================================ //
+  // =========================================== FWAIT FSM ================================================ //
   // Waits for flash internal operations to complete by polling the flash status register (Read Status Register 1)
   typedef enum logic [sizeInBits(11)-1:0] {
     FWAIT_IDLE,
@@ -280,7 +283,7 @@ module axi_to_flash_controller #(
   // ===================================================================================================== //
 
 
-  // =========================================== ERASE SFM ================================================ //
+  // =========================================== ERASE FSM ================================================ //
   // Erases a flash sector before writing
   typedef enum logic [sizeInBits(9)-1:0] {
     ERASE_IDLE,              // Evaluate skip_write flag, to postpone TOP_ERASE and TOP_WRITE to the next beat if possible
@@ -296,7 +299,7 @@ module axi_to_flash_controller #(
   // ===================================================================================================== //
 
 
-  // =========================================== MODIFY SFM ================================================ //
+  // =========================================== MODIFY FSM ================================================ //
   // Overwrite the sector in the buffer with the write beat
   typedef enum logic [sizeInBits(7)-1:0] {
     MODIFY_IDLE,
@@ -310,10 +313,10 @@ module axi_to_flash_controller #(
   // ===================================================================================================== //
 
 
-  // =========================================== WRITE SFM ================================================ //
+  // =========================================== WRITE FSM ================================================ //
   // Programs sector buffer into flash, page by page
   typedef enum logic [sizeInBits(14)-1:0] {
-    WRITE_IDLE,              // Check skip_write to postpone write or not.
+    WRITE_IDLE,              // Check skip_write to postpone write.
     WRITE_WE_CHECK_TX_FIFO,  // Check whether tx_fifo has room
     WRITE_WE_FILL_TX_FIFO,   // Write Write Enable command (FC_WE) in tx_fifo
     WRITE_WE_WAIT_READY,     // Wait for spi_host to be ready
@@ -322,17 +325,20 @@ module axi_to_flash_controller #(
     WRITE_PP_FILL_TX_FIFO,   // Write Page Program command (FC_PP) + address in tx_fifo
     WRITE_PP_WAIT_READY,     // Wait for spi_host to be ready
     WRITE_PP_SEND_CMD,       // Send command to spi_host to release tx_fifo data to flash
+
+    // page store into tx_fifo
     WRITE_PP_PAGE_WRITE_1,   // Send read request to sector buffer
     WRITE_PP_PAGE_WRITE_2,   // Save read 32 bit word into a register
     WRITE_PP_PAGE_WRITE_3,   // Check whether tx_fifo has room
     WRITE_PP_PAGE_WRITE_4,   // Store 32 bit word in tx_fifo, repeat 64 times.
+
     WRITE_PP_WAIT_READY_2,   // Wait for spi_host to be ready
     WRITE_PP_SEND_CMD_2      // Send command to spi_host to release tx_fifo data to flash, repat TOP_WRITE until sector is written
   } write_state_e;
   // ===================================================================================================== //
 
 
-  // =========================================== AXIRESP SFM ================================================ //
+  // =========================================== AXIRESP FSM ================================================ //
   typedef enum logic [sizeInBits(3)-1:0] {
     AXIRESP_IDLE,
     AXIRESP_B,         // Make response in B channel
@@ -343,13 +349,19 @@ module axi_to_flash_controller #(
 
   /*
 
-          SFM flow : 
+          FSM flow : 
 
            - Read  (rnw=1): TOP_IDLE -> TOP_AXIREQ -> TOP_READ -> TOP_AXIRESP -> TOP_IDLE
            
            - Write (rnw=0): TOP_IDLE -> TOP_AXIREQ -> TOP_READ -> TOP_FWAIT -> TOP_ERASE -> TOP_FWAIT -> 
                             TOP_MODIFY -> TOP_WRITE -> TOP_FWAIT -> TOP_AXIRESP -> TOP_IDLE
 
+            Due to the impossibility to set bits individually to '1' in the flash, to write it is required to:
+            1) Store the sector data into a separated buffer
+            2) Erase the sector in the flash (all its bits become '1')
+            3) Modify the buffer with write data
+            4) Program the flash sector with modified sector data from buffer, page by page 
+              (some bits become '0' according to the write data that is being fed)
 
 
                                                   ────────────────────────────────────────
@@ -392,11 +404,10 @@ module axi_to_flash_controller #(
 
   /*
                                           ────────────────────────────────────────
-                                                    SFM SEQUENTIAL LOGIC
+                                                    FSM SEQUENTIAL LOGIC
 
   */
 
-  // // // FSM sequential logic
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
 
@@ -495,12 +506,12 @@ int actual_poweron_wait_cycles;
 
 /*
                                           ┌────────────────────────────────────────┐
-                                          │                  SFM                   │
+                                          │                  FSM                   │
                                           └────────────────────────────────────────┘
 
 
                                           ──────────────────────────────────────────
-                                                    SFM COMBINATIONAL LOGIC
+                                                    FSM COMBINATIONAL LOGIC
 
 */
   always_comb begin
@@ -573,7 +584,7 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                         TOP SFM                        |
+                                                  |                         TOP FSM                        |
                                                   ==========================================================
     */
     case (top_state_q)
@@ -589,7 +600,7 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                       AXIREQ SFM                       |
+                                                  |                       AXIREQ FSM                       |
                                                   ==========================================================
     */
       TOP_AXIREQ: begin
@@ -616,13 +627,13 @@ int actual_poweron_wait_cycles;
             ar_ready = 1'b1;
             // Next state evaluation
             if (~flash_is_on_q && poweron_en_i) begin
-              // if, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to send the power-on command to the flash
+              // if, since last reset, the flash has not been powered on, the POWERON fsm needs to be executed to send the power-on command to the flash
               // POWERON can be bypassed by keeping poweron_en_i low.
               axireq_state_d = AXIREQ_IDLE;
               top_state_d = TOP_POWERON;
             end
             else begin
-              // Otherwise, we can go on with the normal operation
+              // Otherwise, can go on with the normal operation
               axireq_state_d = AXIREQ_IDLE;
               top_state_d = TOP_READ;
             end
@@ -647,11 +658,11 @@ int actual_poweron_wait_cycles;
             logic [AddrWidth-1:0]                 alligned_beat_addr = (first_beat_addr_q / beat_size_q) * beat_size_q;
             int n;
 
-            // Here w_data is put into the wr_beat_queue, however we need to be concious about which byte lanes in w_data are active for the current beat
-            // They are function of the beat size and address
+            // Here write beats from AXI's w_data are put into the wr_beat_queue, however it's needed to be concious about which byte lanes in w_data are active for the current beat
+            // Bytelanes are beat size and adress alligned. The byte lanes to sample for the beat are function of the address of said beat
             if (w_valid) begin
               axi2fls_wr_valid = 1'b1;
-              // Define the bytelanes
+              // Define the active bytelanes
               if (beat_count_q == 0) begin
                 lower_byte_lane = first_beat_addr_q - (first_beat_addr_q / DataBytes)*DataBytes;
                 upper_byte_lane = alligned_beat_addr - (first_beat_addr_q / DataBytes)*DataBytes + (beat_size_q - 1);
@@ -674,20 +685,20 @@ int actual_poweron_wait_cycles;
               // As the queue samples, respond to write channel
               if (axi2fls_wr_ready) begin
                 w_ready = 1'b1;
-                // counter needs to be resused, after this state we want it to reset
+                // counter needs to be resused, after this state it is reset
                 beat_count_d = w_last ? 0 : beat_count_q + 1;
               end
             end
             // Next state evaluation
             if ( w_valid && axi2fls_wr_ready && w_last ) begin
               if (~flash_is_on_q && poweron_en_i) begin
-                // If, since last reset, the flash has not been powered on, the POWERON sfm needs to be executed to issue the power-on command
+                // If, since last reset, the flash has not been powered on, the POWERON fsm needs to be executed to issue the power-on command
                 // POWERON can be bypassed by keeping poweron_en_i low.
                 axireq_state_d = AXIREQ_IDLE;
                 top_state_d = TOP_POWERON;
               end
               else begin
-                // otherwise, we can go on with the normal operation
+                // otherwise, can go on with the normal operation
                 axireq_state_d = AXIREQ_IDLE;
                 top_state_d = TOP_READ;
               end
@@ -703,7 +714,7 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                       POWERON SFM                      |
+                                                  |                       POWERON FSM                      |
                                                   ==========================================================
     */
       TOP_POWERON: begin
@@ -777,28 +788,31 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                       READ SFM                         |
+                                                  |                       READ FSM                         |
                                                   ==========================================================
     */
       TOP_READ: begin
         case (read_state_q)
 
           READ_IDLE: begin
-            // evaluate flash_addr to send to the flash and skip_sector_read
+            // Evaluate flash_addr to send to the flash and skip_sector_read
             logic skip_sector_read;
             logic [FlashAddrW-1:0] previous_flash_addr = flash_addr_q;
             logic [AddrWidth-1:0] sector_address_of_beat = (beat_addr_q >> 12) << 12;
             // Note : Flash address is byte-precise and 24 bits wide
             
-            // Flash_addr evaluation
+            // flash_addr evaluation
             flash_addr_d = rnw_q ? beat_addr_q[FlashAddrW-1:0] : sector_address_of_beat[FlashAddrW-1:0];
 
             // skip_sector_read evaluation
-            // We want to skip the sector storage into the sector buffer in case nothing would change from the previous beat
+
+            // For each write beat, the flash sector that contains it is store in the sector buffer
+            // Skip this operation in case it would be redoundant from last write beat
+
             // Skip the sector read if :
-            // We are writing
-            // The sector base address sent to the flash would be the equal to the previous
-            // it is not the first beat
+            // * Writing
+            // * The sector base address sent to the flash would be the equal to the one of previous write beat
+            // * it is not the first beat
             skip_sector_read = ((flash_addr_d == previous_flash_addr) && ~rnw_q && beat_count_q > 0 ) ? 1'b1 : 1'b0; 
             // Next state evaluation
             if (skip_sector_read) begin
@@ -810,9 +824,9 @@ int actual_poweron_wait_cycles;
           end
 
           READ_SET_RXWM_R: begin
-            // Set RX watermark to 1 word so we get notified when status byte arrives
-            // but we need to preserve other bits when modifying RXWM
-            // this is why here we first read the entire spi_host control register to then write back the rest of the bits alongside the new wm
+            // Set RX watermark to 1 word to get notified when status byte arrives
+            // but it is needed to preserve other bits when modifying RXWM
+            // this is why here it is first read the entire spi_host control register to then write back the rest of the bits alongside the new wm
             // Read the control register:
             spi_host_reg_req_offset = spi_host_reg_pkg::SPI_HOST_CONTROL_OFFSET;
             spi_host_reg_req_o.write = 1'b0;
@@ -844,7 +858,7 @@ int actual_poweron_wait_cycles;
           READ_SPI_CHECK_TX_FIFO: begin
             // Proceed only if tx_fifo is not full, exploit direct access to spi_host status
             // At this point, given the value of quadspi_en_i (from external top register), it is decided the speed of the spi read
-            // A different branch in the TOP_READ FSM is taken depending on the spi speed
+            // A different branch is taken depending on the spi speed
             if (external_spi_host_hw2reg_status_i.txqd.d < SPI_FLASH_TX_FIFO_DEPTH[7:0]) begin
               if (~quadspi_en_i) read_state_d = READ_SPI_FILL_TX_FIFO;
               if ( quadspi_en_i) read_state_d = READ_QUAD_SPI_FILL_TX_FIFO_1;
@@ -853,6 +867,7 @@ int actual_poweron_wait_cycles;
 
           READ_SPI_FILL_TX_FIFO: begin
             // Here starts the standard spi speed read branch
+
             // Write standard read command + flash address in tx_fifo
             spi_host_reg_req_offset  = spi_host_reg_pkg::SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
@@ -912,7 +927,7 @@ int actual_poweron_wait_cycles;
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
             if (rnw_q) begin
-              // READ: receive a number of bytes specified by axi (beat_size) (up to 8 bytes)
+              // READ: receive a number of bytes specified by AXI (beat_size) (up to 8 bytes)
               spi_host_reg_req_o.wdata = {
                 3'h0, 2'h1, 2'h0, 1'h0,  {16'h0 , (8'h0 | (beat_size_q - 1'h1))}
               }; // Empty + Direction + Speed + Csaat + Length
@@ -932,6 +947,7 @@ int actual_poweron_wait_cycles;
 
           READ_QUAD_SPI_FILL_TX_FIFO_1: begin
             // Here starts the quad spi speed read branch
+
             // Write quad read command in tx_fifo
             spi_host_reg_req_offset  = spi_host_reg_pkg::SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
@@ -1083,11 +1099,11 @@ int actual_poweron_wait_cycles;
 
           READ_WAIT_RXWM: begin
             // Wait for flash data to be present in the rx_fifo before sending a pop request (check whether wm is reached)
-            // This is why we set rx_wm to 1
+            // This is why rx_wm is set to 1
             if (external_spi_host_hw2reg_status_i.rxwm.d) begin
               if (rnw_q) begin
                 // Read : load beat into queue
-                // Depending on parallelism chose a different sfm branch
+                // Depending on parallelism chose a different fsm branch
                 if (~datawidth_is_64_n32) begin   // 32bit
                   read_state_d = READ_R_BEAT_PUSH_DW32;   
                 end
@@ -1152,8 +1168,10 @@ int actual_poweron_wait_cycles;
             If AXI's DataWidth (and this module's) is 64, beat queues and their buffer also are 64 bit wide,
             however the width of spi_host and its fifos (and the flash) stays the same at 32 bits.
             This means that two states may be required to load data from rx_fifo to rd_beat_queue_buffer, since beat_size can be > 4.
-            Here we write the lower 32 bites of the rd_queue_buffer.
             */
+
+            // Here the lower 32 bites of the rd_queue_buffer are written.
+
             // Send a pop request to rx_fifo
             spi_host_reg_req_offset  = spi_host_reg_pkg::SPI_HOST_RXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b0;
@@ -1169,8 +1187,9 @@ int actual_poweron_wait_cycles;
           end
 
           READ_R_BEAT_PUSH_DW64_2: begin
-            // Here we write the upper 32 bites of the rd_queue_buffer
-            // If the beat size is not higher than 4 bytes, then we can bypass the request and just write zeroes
+            // Here the upper 32 bites of the rd_queue_buffer are written
+
+            // If the beat size is not higher than 4 bytes, then it is allowed bypass the request and just write zeroes
             if (beat_size_q > 4) begin
               spi_host_reg_req_offset  = spi_host_reg_pkg::SPI_HOST_RXDATA_OFFSET;
               spi_host_reg_req_o.write = 1'b0;
@@ -1193,19 +1212,19 @@ int actual_poweron_wait_cycles;
           end
 
           READ_R_BEAT_PUSH_FIN: begin
-            // push read beat into the rd_queue
+            // Push read beat into the rd_queue
             spihost_rd_valid = 1'b1;
             spihost_rd_data = rd_queue_buffer_q;
             if (spihost_rd_ready) begin
               beat_count_d = beat_count_q + 1;
-              // If there are more beats to read we update beat_address, otherwise we move to TOP_AXIRESP
+              // If there are more beats to read, beat_address is updated, otherwise TOP_AXIRESP is up
               if (beat_count_d < beat_number_q) begin
                 // This controller assumes to work only in INCR bursts
                 // addr_0 = ax_addr
                 // addr_0_alligned = INT(addr_0 / size) * size
                 // addr_N = addr_0_alligned + size*N
                 beat_addr_d = ( (first_beat_addr_q / beat_size_q) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
-                flash_addr_d = beat_addr_d; // It is enstablished that we are reading
+                flash_addr_d = beat_addr_d; // It is enstablished that the intention is to read the flash
               end
             end
             // Next state evaluation
@@ -1227,12 +1246,11 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                       FWAIT SFM                        |
+                                                  |                       FWAIT FSM                        |
                                                   ==========================================================
     */
-      // Polls the flash Status Register 1 (SR1) to check if the flash is busy
-      // The BUSY bit (bit 0) is set during erase/program operations in spi_host
-      // This FSM is called multiple times during a write operation:
+      // Polls the flash Status Register 1 (SR1) to check if the flash is busy, allowing progress only if ready.
+      // This FSM is called multiple times during a AXI write transaction:
       //
       //   fwait_cnt = 0: After READ  -> wait for flash ready, then go to ERASE
       //   fwait_cnt = 1: After ERASE -> wait for flash ready, then go to MODIFY
@@ -1243,9 +1261,9 @@ int actual_poweron_wait_cycles;
             fwait_state_d = FWAIT_SET_RXWM_R;
           end
           FWAIT_SET_RXWM_R: begin
-            // Set RX watermark to 1 word so we get notified when status byte arrives
-            // but we need to preserve other bits when modifying RXWM
-            // this is why here we first read the entire spi_host control register to then write back the rest of the bits alongside the new wm
+            // Set RX watermark to 1 word to get notified when status byte arrives
+            // but it is needed to preserve other bits when modifying RXWM
+            // this is why here it is first read the entire spi_host control register to then write back the rest of the bits alongside the new wm
             // Read the control register:
             spi_host_reg_req_offset = spi_host_reg_pkg::SPI_HOST_CONTROL_OFFSET;
             spi_host_reg_req_o.write = 1'b0;
@@ -1349,7 +1367,7 @@ int actual_poweron_wait_cycles;
 
           FWAIT_WAIT_RXWM: begin
             // Wait for flash status to be present in the rx_fifo before sending a pop request (check whether wm is reached)
-            // This is why we set rx_wm to 1
+            // This is why rx_wm is set to 1
             // Next state evaluation
             if (external_spi_host_hw2reg_status_i.rxwm.d) begin
               fwait_state_d = FWAIT_READ_FLASH_STATUS;
@@ -1394,7 +1412,7 @@ int actual_poweron_wait_cycles;
                       // Increment beat counter
                       beat_count_d = beat_count_q + 1;
                       if (beat_count_d < beat_number_q) begin
-                        // There are more beats to go for this AXI transmission : -> go to READ
+                        // There are more beats to go for this AXI transaction : -> go to READ
                         /*
 
                         Evaluate address of next beat
@@ -1435,30 +1453,33 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                       ERASE SFM                        |
+                                                  |                       ERASE FSM                        |
                                                   ==========================================================
     */
       TOP_ERASE: begin
         case (erase_state_q)
           ERASE_IDLE: begin
             logic [AddrWidth-1:0] next_beat_addr, next_sect_addr, curr_sect_addr;
-            // In this state, before erasing we evaluate the possibility to postpone flash erase and program in the next beat if the sector involved would be the same
-            // As these operations are the performance bottlenecks and it is better to share them between more beat instances.
+            // In this state, before erasing, it is considered the possibility to postpone flash erase and program in the next write beat cycle if the sector involved would be the same
+            // As these operations are the performance bottlenecks and it is better to share them between more beat write instances.
+
+            // This is done if :
+            // * The current sector is not the first of two being written for the current signle beat (sector would change after)
+            // * The current sector is not the last one (would be the last call to write)
+            // * The next sector address would be the same as current
             if (beat_count_q < beat_number_q - 1) begin
-              // This is done if :
-              // The current sector is not the first of two being written for the current signle beat (sector would change after)
-              // The current sector is not the last one (would be the last call to write)
-              // The next sector address would be the same as current
               next_beat_addr = ((first_beat_addr_q / beat_size_q) * beat_size_q) + (beat_count_q + 1)*beat_size_q;
               next_sect_addr = (next_beat_addr >> 12) << 12;
-              curr_sect_addr = '0 | flash_addr_q;   // flash_addr_q in write is the current sector address, set in TOP_READ
-              skip_write_d = (next_sect_addr == curr_sect_addr) ? 1'b1 : 1'b0; // This value is reset after each beat write or partial beat write
+              curr_sect_addr = '0 | flash_addr_q;   // flash_addr_q during write transactions is the current sector address, set in TOP_READ
+              skip_write_d = (next_sect_addr == curr_sect_addr) ? 1'b1 : 1'b0; // This value is reset after each beat write
             end
             // Next state evaluation
             if(skip_write_d) begin
+              // skip
               erase_state_d = ERASE_IDLE;
               top_state_d = TOP_FWAIT;
             end else begin
+              // no skip
               erase_state_d = ERASE_WE_CHECK_TX_FIFO;
             end
           end
@@ -1556,7 +1577,7 @@ int actual_poweron_wait_cycles;
               // Go to FWAIT FSM to poll status register until erase completes
               erase_state_d = ERASE_IDLE;
               top_state_d = TOP_FWAIT;
-              fwait_state_d = FWAIT_IDLE; // Start polling
+              fwait_state_d = FWAIT_IDLE;
             end
           end
 
@@ -1569,25 +1590,27 @@ int actual_poweron_wait_cycles;
 
     /*
                                                   ==========================================================
-                                                  |                       ERASE SFM                        |
+                                                  |                       MODIFY FSM                       |
                                                   ==========================================================
  
   
           * Address in the sector buffer scratchpad is not byte precise but word precise, unlike the flash
-              - beat address and word address can be misaligned
+              - sector buffer address and flash address can be misaligned
 
-          * one beat (up to one word of size) can cover more words in the sector buffer
+          * One beat (up to one 4/8 bytes of size) can cover more words in the sector buffer
               - datawidth_is_64_n32 = 0 : up to two adiacent words
               - datawidth_is_64_n32 = 1 : up to three adiacent words
 
-          + there is one branch per Parallelism
+          + There is one branch per datawidth
 
           Each branch MODIFY_SECTOR_UPDATE has a state for each word that could be overwritten by the beat in the sector buffer
           32 bits : 2 words , 2 states
           64 bits : 3 words , 3 states
-  
+
+          examples
+
           32 bits:
-                              word n+1       word n
+                               word n+1       word n
                               3  2  1  0  |  3  2  1  0  
           beat bytes :           3  2  1     0
   
@@ -1595,7 +1618,7 @@ int actual_poweron_wait_cycles;
   
   
           64 bits:
-                                  word n+2      word n+1       word n
+                                word n+2      word n+1       word n
                               3  2  1  0  |  3  2  1  0  |  3  2  1  0 
           beat bytes :                 7     6  5  4  3     2  1  0  
   
@@ -1606,6 +1629,7 @@ int actual_poweron_wait_cycles;
     */
 
       TOP_MODIFY: begin
+        // Definitions useful for this top_state
         logic [AddrWidth-1:0] sector_relative_addr = '0;
         logic [1:0] misallignment;
         logic [95:0] buffer_beat_space_data;
@@ -1617,14 +1641,14 @@ int actual_poweron_wait_cycles;
           end
 
           MODIFY_BEAT_POP: begin
-            // pop write beat from wr_queue into a register
+            // Pop write beat from wr_queue into a register
             if (spihost_wr_valid) begin
               spihost_wr_ready = 1'b1;
               wr_queue_buffer_data_d = spihost_wr_data;
               wr_queue_buffer_be_d = spihost_wr_be;
             end
             // Next state evaluation
-            // Sector buffer, like flash, has a constant datawidth of 32, so we need separate SFM branches depending on AXI datawitdh
+            // Sector buffer, like flash, has a constant datawidth of 32, therefore must separate FSM branches depending on AXI datawitdh
             if (spihost_wr_valid &&  datawidth_is_64_n32) modify_state_d = MODIFY_SECTOR_UPDATE_DW32_1;
             if (spihost_wr_valid && ~datawidth_is_64_n32) modify_state_d = MODIFY_SECTOR_UPDATE_DW64_1;
           end
@@ -1632,12 +1656,12 @@ int actual_poweron_wait_cycles;
           MODIFY_SECTOR_UPDATE_DW32_1: begin
             // Sector_relative_addr = beat_addr & 000fff
             sector_relative_addr[11:0] = beat_addr_q[11:0];
-            // Sector buffer is word precise, so we remove the two LSB that indicate the 4 bytes inside the word
+            // Sector buffer address is word precise, so remove the two LSB that indicate the 4 bytes inside the word
             sect_buffer_addr = sector_relative_addr >> 2;
             // Those two LSB indicate the miasslignment between flash address and sector buffer address
             misallignment = sector_relative_addr[1:0];
             
-            // these two signals indicate the beat data how it covers the buffer slots
+            // These two signals indicate how the beat data is distributed across the 64 bits of the two adiacent words
             buffer_beat_space_data = wr_queue_buffer_data_q << misallignment*8;
             buffer_beat_space_be = wr_queue_buffer_be_q << misallignment;
 
@@ -1654,15 +1678,15 @@ int actual_poweron_wait_cycles;
         MODIFY_SECTOR_UPDATE_DW32_2: begin
           // Sector_relative_addr = beat_addr & 000fff
           sector_relative_addr[11:0] = beat_addr_q[11:0];
-          // Sector buffer is word precise, so we remove the two LSB that indicate the 4 bytes inside the word, +1 being the next word
+          // Sector buffer is word precise, so remove the two LSB that indicate the 4 bytes inside the word, +1 being the next word
           sect_buffer_addr = (sector_relative_addr >> 2) + 1;
           // Those two LSB indicate the miasslignment between flash address and sector buffer address
           misallignment = sector_relative_addr[1:0];
 
-          // if address would overflow, it means that the sector finished and so the beat. skip this state
+          // If address would overflow, it means that the sector is finished and so the beat. skip this state
           if (sect_buffer_addr[9:0] != 10'b0000000000) begin
 
-            // these two signals indicate the beat data how it covers the buffer slots
+            // These two signals indicate how the beat data is distributed across the 64 bits of the two adiacent words
             buffer_beat_space_data = wr_queue_buffer_data_q << misallignment*8;
             buffer_beat_space_be = wr_queue_buffer_be_q << misallignment;
 
@@ -1681,12 +1705,12 @@ int actual_poweron_wait_cycles;
         MODIFY_SECTOR_UPDATE_DW64_1: begin
           // Sector_relative_addr = beat_addr & 000fff
           sector_relative_addr[11:0] = beat_addr_q[11:0];
-          // Sector buffer is word precise, so we remove the two LSB that indicate the 4 bytes inside the word
+          // Sector buffer is word precise, so remove the two LSB that indicate the 4 bytes inside the word
           sect_buffer_addr = sector_relative_addr >> 2;
           // Those two LSB indicate the miasslignment between flash address and sector buffer address
           misallignment = sector_relative_addr[1:0];
           
-          // these two signals indicate the beat data how it covers the buffer slots
+          // These two signals indicate how the beat data is distributed across the 96 bits of the three adiacent words
           buffer_beat_space_data = wr_queue_buffer_data_q << misallignment*8;
           buffer_beat_space_be = wr_queue_buffer_be_q << misallignment;
 
@@ -1703,14 +1727,14 @@ int actual_poweron_wait_cycles;
         MODIFY_SECTOR_UPDATE_DW64_2: begin
           // Sector_relative_addr = beat_addr & 000fff
           sector_relative_addr[11:0] = beat_addr_q[11:0];
-          // Sector buffer is word precise, so we remove the two LSB that indicate the 4 bytes inside the word, +1 being the next word
+          // Sector buffer is word precise, so remove the two LSB that indicate the 4 bytes inside the word, +1 being the next word
           sect_buffer_addr = (sector_relative_addr >> 2) + 1;
           // Those two LSB indicate the miasslignment between flash address and sector buffer address
           misallignment = sector_relative_addr[1:0];
           
           // if address would overflow, it means that the sector finished and so the beat. skip this state
           if (sect_buffer_addr[9:0] != 10'b0000000000) begin
-            // these two signals indicate the beat data how it covers the buffer slots
+            // These two signals indicate how the beat data is distributed across the 96 bits of the three adiacent words
             buffer_beat_space_data = wr_queue_buffer_data_q << misallignment*8;
             buffer_beat_space_be = wr_queue_buffer_be_q << misallignment;
 
@@ -1728,15 +1752,15 @@ int actual_poweron_wait_cycles;
         MODIFY_SECTOR_UPDATE_DW64_3: begin
           // Sector_relative_addr = beat_addr & 000fff
           sector_relative_addr[11:0] = beat_addr_q[11:0];
-          // Sector buffer is word precise, so we remove the two LSB that indicate the 4 bytes inside the word, +1 being the next word
+          // Sector buffer is word precise, so remove the two LSB that indicate the 4 bytes inside the word, +1 being the next word
           sect_buffer_addr = (sector_relative_addr >> 2) + 2;
           // Those two LSB indicate the miasslignment between flash address and sector buffer address
           misallignment = sector_relative_addr[1:0];
           
           // if address would overflow, it means that the sector finished and so the beat. skip this state.
-          // skip also if last state we skipped, for the same reason.
+          // skip also if last state was skipped, for the same reason.
           if (sect_buffer_addr[9:0] != 10'b0000000001 && sect_buffer_addr[9:0] != 10'b0000000000) begin
-            // these two signals indicate the beat data how it covers the buffer slots
+            // These two signals indicate how the beat data is distributed across the 96 bits of the three adiacent words
             buffer_beat_space_data = wr_queue_buffer_data_q << misallignment*8;
             buffer_beat_space_be = wr_queue_buffer_be_q << misallignment;
 
@@ -1761,7 +1785,7 @@ int actual_poweron_wait_cycles;
       /*
 
                                                   ==========================================================
-                                                  |                       WRITE SFM                        |
+                                                  |                       WRITE FSM                        |
                                                   ==========================================================
 
 
@@ -1775,7 +1799,7 @@ int actual_poweron_wait_cycles;
         case (write_state_q)
 
           WRITE_IDLE: begin
-            // If we are skipping TOP_WRITE, then we assume that the sector does not have to be written by any more pages
+            // TOP_WRITE is skipped in the same conditions of TOP_ERASE.
             if (skip_write_q) page_count_d = SE_PSIZE;
             // Next state evaluation
             if (skip_write_q) begin
@@ -1840,8 +1864,9 @@ int actual_poweron_wait_cycles;
 
           WRITE_PP_FILL_TX_FIFO: begin
             logic [12:0] OPCODE;
-            // page program speed is decided by quadspi_en_i (from external top reg)
+            // page program speed and so the opcode are decided by quadspi_en_i (from external top reg)
             OPCODE = quadspi_en_i ? FC_PPQ : FC_PP;
+
             // Write page program command + page address in tx_fifo
             spi_host_reg_req_offset = spi_host_reg_pkg::SPI_HOST_TXDATA_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
@@ -1947,6 +1972,7 @@ int actual_poweron_wait_cycles;
           WRITE_PP_SEND_CMD_2: begin
             logic [1:0] SPEED;
             SPEED = quadspi_en_i ? 2'h2 : 2'h0;
+
             // Send command to spi_host: send direction and length of write operation
             // COMMAND register format:
             //   [31:29] = Reserved
@@ -1979,7 +2005,7 @@ int actual_poweron_wait_cycles;
 
       
                                                   ==========================================================
-                                                  |                      AXIRESP SFM                       |
+                                                  |                      AXIRESP FSM                       |
                                                   ==========================================================
 
       Create a response to the manager from its last request, either on R or B channel
@@ -2007,7 +2033,7 @@ int actual_poweron_wait_cycles;
 
           AXIRESP_R: begin
             // Respond to the R channel
-            // There needs to be handling done regarding the active byte lanes of the axi data bus
+            // There needs to be handling done regarding the active byte lanes of the axi data bus, as it was done in state AXIREQ_W
             int n;
             if (axi2fls_rd_valid) begin
               logic [AddrWidth-1:0]                 beat_addr_at_beat_count;
@@ -2056,8 +2082,10 @@ int actual_poweron_wait_cycles;
     endcase
   end
 
-  // // AXI beat queues
-  // Data from axi w channel is stored beat by beat inside the queue to be written separatedly
+  // AXI beat queues
+  // Contains both rd_beat_queue and wr_beat_queue
+  // Write beats are pushed into wr_beat_queue from w_data to be written individualy into the flash
+  // Read beats are pushed into rd_beat_queue from flash to be sent into r_data during the response
   
   logic [DataWidth-1:0] axi2fls_wr_data;
   logic [DataBytes-1:0] axi2fls_wr_be;
@@ -2125,7 +2153,7 @@ int actual_poweron_wait_cycles;
     .clear_i                  (clear_queues)
 );
 
-  // // Sector buffer scratchpad
+  // Sector buffer scratchpad
 
   localparam int SectorBuffer_AddrWidth = sizeInBits(SE_WSIZE);
   localparam int SectorBuffer_DataWidth = 32;
