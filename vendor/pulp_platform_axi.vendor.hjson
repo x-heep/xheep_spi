@@ -10,7 +10,7 @@
     rev: "78831b6feba265d5ee2683bbf42b4150f8a35c43",
   },
   
-  patch_dir: "../patches/pulp_platform_axi",
+  patch_dir: "patches/pulp_platform_axi",
   
   exclude_from_upstream: [
     ".ci",
