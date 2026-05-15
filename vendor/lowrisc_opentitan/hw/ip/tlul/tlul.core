@@ -9,7 +9,10 @@ filesets:
   files_rtl:
     depend:
       - lowrisc:tlul:socket_1n
+      - lowrisc:tlul:socket_m1
+      - lowrisc:tlul:adapter_sram
       - lowrisc:tlul:adapter_reg
+      - lowrisc:tlul:sram2tlul
 
 targets:
   default:

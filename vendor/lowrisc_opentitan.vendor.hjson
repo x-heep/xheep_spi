@@ -13,6 +13,14 @@
   patch_dir: "patches/lowrisc_opentitan",
 
   exclude_from_upstream: [
+    ".github",
+    ".clang-format",
+    ".dockerignore",
+    ".flake8",
+    ".gitignore",
+    ".style.yapf",
+    ".svlint.toml",
+    ".svls.toml",
     "apt-requirements.txt",
     "azure-pipelines.yml",
     "check_tool_requirements.core",
@@ -98,9 +106,10 @@
     "hw/ip/gpio/doc",
     "hw/ip/gpio/dv",
     "hw/ip/hmac",
-    "hw/ip/i2c/doc",
-    "hw/ip/i2c/dv",
-    "hw/ip/_index",.md
+    "hw/ip/i2c",
+    "hw/ip/rv_plic",
+    "he/ip/tlul",
+    "he/ip/uart",
     "hw/ip/keymgr",
     "hw/ip/kmac",
     "hw/ip/lc_ctrl",
@@ -134,6 +143,7 @@
     "hw/ip/prim_generic/prim_generic_pad_wrapper.core",
     "hw/ip/prim_generic/rtl/prim_generic_pad_attr.sv",
     "hw/ip/prim_generic/rtl/prim_generic_pad_wrapper.sv",
+    "util",
   ]
 
 
