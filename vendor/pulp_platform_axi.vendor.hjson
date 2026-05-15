@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 {
-  name: "axi",
-  target_dir: "axi",
+  name: "pulp_platform_axi",
+  target_dir: "pulp_platform_axi",
 
   upstream: {
     url: "https://github.com/pulp-platform/axi.git",
@@ -16,8 +16,19 @@
     ".ci",
     ".github",
     ".gitlab-ci.d",
+    "doc",
     "scripts",
     "test",
+    ".gitignore",
+    ".gitlab-ci.yml",
+    "Bender.yml",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "ips_list.yml",
+    "LICENSE",
+    "README.md",
+    "src_files.yml",
+    "VERSION"
   ]
 
 }
