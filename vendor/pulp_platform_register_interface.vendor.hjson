@@ -16,5 +16,4 @@
     "docs",
     "vendor/lowrisc_opentitan.vendor.hjson",
   ]
-
 }
