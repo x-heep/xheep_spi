@@ -28,7 +28,8 @@
     "LICENSE",
     "README.md",
     "src_files.yml",
-    "VERSION"
+    "VERSION",
+    "Makefile"
   ]
 
 }

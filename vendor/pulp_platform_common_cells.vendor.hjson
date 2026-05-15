@@ -12,4 +12,22 @@
 
   patch_dir: "patches/pulp_platform_common_cells",
 
+  exclude_from_upstream: [
+      ".github",
+      "ci",
+      "formal",
+      "lint",
+      "test",
+      ".gitignore",
+      ".gitlab-ci.yml",
+      ".travis.yml",
+      "Bender.yml",
+      "CHANGELOG.md",
+      "ips_list.yml",
+      "LICENSE",
+      "Makefile",
+      "README.md",
+      "src_files.yml"
+  ]
+
 }
