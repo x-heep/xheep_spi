@@ -20,6 +20,7 @@ module w25q128jw_controller
   import core_v_mini_mcu_pkg::*;
   import dma_reg_pkg::*;
   import spi_host_reg_pkg::*;
+  import cache_reg_pkg::*;
 #(
     parameter type reg_req_t = reg_pkg::reg_req_t,
     parameter type reg_rsp_t = reg_pkg::reg_rsp_t
@@ -45,7 +46,11 @@ module w25q128jw_controller
 
     // DMA channel redy/done signals (directly from DMA IP)
     input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_ready_i,
-    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i
+    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i,
+
+    // Cache DMA OBI slave port (driven by flash_mem_slave bus via spi_subsystem mux)
+    input  obi_pkg::obi_req_t  cache_dma_req_i,
+    output obi_pkg::obi_resp_t cache_dma_resp_o
 );
 
   // ============== PACKAGE IMPORTS ==============
@@ -326,6 +331,10 @@ module w25q128jw_controller
 
   logic [31:0] flash_address;
 
+  // Cache signals
+  cache_reg_pkg::cache_req_t cache_ctrl_req;
+  cache_reg_pkg::cache_res_t cache_ctrl_resp;
+
   // FSM sequential logic
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -593,7 +602,7 @@ module w25q128jw_controller
           //   Direction RX only,
           //   Speed standard,
           //   CSAAT 0,
-          //   Length-1 
+          //   Length-1
           READ_SPI_SEND_CMD_2: begin
             spi_host_reg_req_offset  = SPI_HOST_COMMAND_OFFSET;
             spi_host_reg_req_o.write = 1'b1;
@@ -1728,6 +1737,18 @@ module w25q128jw_controller
   assign hw2reg.status.d = (top_state_q == TOP_IDLE); // READY = 1 when TOP FSM is in IDLE state, 0 otherwise
   assign hw2reg.status.de = 1'b1;  // Always update status register
   assign w25q128jw_controller_intr_o = reg2hw.intr_status.q; // ISR Handler lowers interrupt status register (interrupt register is risen in hw2reg by FSM when done)
+
+  // ============== CACHE INSTANTIATION ==============
+  assign cache_ctrl_req = '0;
+
+  cache cache_i (
+    .clk_i             (clk_i),
+    .rst_ni            (rst_ni),
+    .dma_req_i         (cache_dma_req_i),
+    .dma_resp_o        (cache_dma_resp_o),
+    .controller_req_i  (cache_ctrl_req),
+    .controller_resp_o (cache_ctrl_resp)
+  );
 
   // Registers
   w25q128jw_controller_reg_top #(

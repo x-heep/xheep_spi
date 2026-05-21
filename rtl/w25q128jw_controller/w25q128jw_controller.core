@@ -14,7 +14,11 @@ filesets:
       - x-heep::packages
       - lowrisc:ip:spi_host:1.0
       - x-heep:ip:dma
+      - pulp-platform.org::tech_cells_generic
     files:
+    - rtl/cache/cache_reg_pkg.sv
+    - rtl/cache/cache_way.sv
+    - rtl/cache/cache.sv
     - rtl/w25q128jw_controller_reg_pkg.sv
     - rtl/w25q128jw_controller_reg_top.sv
     - rtl/w25q128jw_controller.sv
