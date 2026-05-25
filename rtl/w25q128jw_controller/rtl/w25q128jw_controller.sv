@@ -46,11 +46,7 @@ module w25q128jw_controller
 
     // DMA channel redy/done signals (directly from DMA IP)
     input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_ready_i,
-    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i,
-
-    // Cache DMA OBI slave port (driven by flash_mem_slave bus via spi_subsystem mux)
-    input  obi_pkg::obi_req_t  cache_dma_req_i,
-    output obi_pkg::obi_resp_t cache_dma_resp_o
+    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i
 );
 
   // ============== PACKAGE IMPORTS ==============
