@@ -86,5 +86,14 @@
         { bits: "7:0", name: "DMA_SLOT_WAIT_COUNTER", desc: "A DMA counter used to wait before submitting the next req when using slots"}
       ]
     }
+    {
+      name:    "CACHE_DATA"
+      desc:    "Cache data port, used to read from/write to the DMA buffer"
+      swaccess: "rw"
+      hwaccess: "hrw"
+      fields: [
+        { bits: "31:0", name: "CACHE_DATA", desc: "Cache data port, used to read from/write to the DMA buffer" }
+      ]
+    }
   ]
 }

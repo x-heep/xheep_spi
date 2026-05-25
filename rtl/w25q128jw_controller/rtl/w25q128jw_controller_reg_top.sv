@@ -101,6 +101,9 @@ module w25q128jw_controller_reg_top #(
   logic [7:0] dma_slot_wait_counter_qs;
   logic [7:0] dma_slot_wait_counter_wd;
   logic dma_slot_wait_counter_we;
+  logic [31:0] cache_data_qs;
+  logic [31:0] cache_data_wd;
+  logic cache_data_we;
 
   // Register instances
   // R[control]: V(False)
@@ -399,9 +402,36 @@ module w25q128jw_controller_reg_top #(
   );
 
 
+  // R[cache_data]: V(False)
+
+  prim_subreg #(
+    .DW      (32),
+    .SWACCESS("RW"),
+    .RESVAL  (32'h0)
+  ) u_cache_data (
+    .clk_i   (clk_i    ),
+    .rst_ni  (rst_ni  ),
+
+    // from register interface
+    .we     (cache_data_we),
+    .wd     (cache_data_wd),
+
+    // from internal hardware
+    .de     (hw2reg.cache_data.de),
+    .d      (hw2reg.cache_data.d ),
+
+    // to internal hardware
+    .qe     (),
+    .q      (reg2hw.cache_data.q ),
+
+    // to register interface (read)
+    .qs     (cache_data_qs)
+  );
 
 
-  logic [8:0] addr_hit;
+
+
+  logic [9:0] addr_hit;
   always_comb begin
     addr_hit = '0;
     addr_hit[0] = (reg_addr == W25Q128JW_CONTROLLER_CONTROL_OFFSET);
@@ -413,6 +443,7 @@ module w25q128jw_controller_reg_top #(
     addr_hit[6] = (reg_addr == W25Q128JW_CONTROLLER_INTR_STATUS_OFFSET);
     addr_hit[7] = (reg_addr == W25Q128JW_CONTROLLER_INTR_ENABLE_OFFSET);
     addr_hit[8] = (reg_addr == W25Q128JW_CONTROLLER_DMA_SLOT_WAIT_COUNTER_OFFSET);
+    addr_hit[9] = (reg_addr == W25Q128JW_CONTROLLER_CACHE_DATA_OFFSET);
   end
 
   assign addrmiss = (reg_re || reg_we) ? ~|addr_hit : 1'b0 ;
@@ -428,7 +459,8 @@ module w25q128jw_controller_reg_top #(
                (addr_hit[5] & (|(W25Q128JW_CONTROLLER_PERMIT[5] & ~reg_be))) |
                (addr_hit[6] & (|(W25Q128JW_CONTROLLER_PERMIT[6] & ~reg_be))) |
                (addr_hit[7] & (|(W25Q128JW_CONTROLLER_PERMIT[7] & ~reg_be))) |
-               (addr_hit[8] & (|(W25Q128JW_CONTROLLER_PERMIT[8] & ~reg_be)))));
+               (addr_hit[8] & (|(W25Q128JW_CONTROLLER_PERMIT[8] & ~reg_be))) |
+               (addr_hit[9] & (|(W25Q128JW_CONTROLLER_PERMIT[9] & ~reg_be)))));
   end
 
   assign control_start_we = addr_hit[0] & reg_we & !reg_error;
@@ -463,6 +495,9 @@ module w25q128jw_controller_reg_top #(
 
   assign dma_slot_wait_counter_we = addr_hit[8] & reg_we & !reg_error;
   assign dma_slot_wait_counter_wd = reg_wdata[7:0];
+
+  assign cache_data_we = addr_hit[9] & reg_we & !reg_error;
+  assign cache_data_wd = reg_wdata[31:0];
 
   // Read data return
   always_comb begin
@@ -504,6 +539,10 @@ module w25q128jw_controller_reg_top #(
 
       addr_hit[8]: begin
         reg_rdata_next[7:0] = dma_slot_wait_counter_qs;
+      end
+
+      addr_hit[9]: begin
+        reg_rdata_next[31:0] = cache_data_qs;
       end
 
       default: begin
