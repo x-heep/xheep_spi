@@ -151,7 +151,8 @@ module w25q128jw_controller
     TOP_ERASE,    // Erase flash sector
     TOP_MODIFY,   // Modify RAM sector buffer with RAM data to write-back to flash
     TOP_WRITE,    // Write RAM sector buffer to flash
-    TOP_DMA_INIT  // Initialize DMA registers
+    TOP_DMA_INIT, // Initialize DMA registers
+    TOP_DONE      // Complete operation and go back to IDLE
   } top_state_e;
 
   // -------- READ FSM STATES --------
@@ -210,11 +211,12 @@ module w25q128jw_controller
   // -------- FLASH WAIT RETURN STATES --------
   // Reset wait status and redirect to correct FSM after flash is ready
   // depending on which operation we were waiting for
+  // Note: only used for WRITE operation
   typedef enum logic [1:0] {
-    FWAIT_RETURN_IDLE,
-    FWAIT_RETURN_ERASE,
-    FWAIT_RETURN_MODIFY,
-    FWAIT_RETURN_WRITE
+    FWAIT_RETURN_IDLE, // After READ: -> ERASE
+    FWAIT_RETURN_ERASE, // After ERASE: -> MODIFY
+    FWAIT_RETURN_WRITE, // After page < 15: -> WRITE (next page)
+    FWAIT_RETURN_SECTOR_DONE // After page 15: check if more sectors to write
   } fwait_return_e;
 
   // -------- ERASE FSM STATES --------
@@ -323,16 +325,6 @@ module w25q128jw_controller
   logic [31:0] dma_size_q, dma_size_d;
 
   logic [31:0] flash_address;
-
-  function automatic void complete_read();
-    read_state_d            = READ_IDLE;
-    top_state_d             = TOP_IDLE;
-
-    hw2reg.control.start.de = 1'b1;
-    hw2reg.control.start.d  = 1'b0;
-    hw2reg.intr_status.de   = 1'b1;
-    hw2reg.intr_status.d    = reg2hw.intr_enable.q;
-  endfunction
 
   // FSM sequential logic
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -875,7 +867,8 @@ module w25q128jw_controller
                            {14'h0, tail_bytes_q});
             end else begin
               // No tail to transfer, complete operation
-              complete_read();
+              read_state_d = READ_IDLE;
+              top_state_d  = TOP_DONE;
             end
           end
 
@@ -905,7 +898,8 @@ module w25q128jw_controller
           // ============== WAIT FOR DMA COMPLETION (TAIL) ==============
           READ_TAIL_TRANS: begin
             if (dma_done_i[0]) begin  // DMA channel 0 done signal
-              complete_read();
+              read_state_d = READ_IDLE;
+              top_state_d  = TOP_DONE;
             end
           end
 
@@ -1064,27 +1058,22 @@ module w25q128jw_controller
                   end
                   // After ERASE: Flash ready -> go to MODIFY
                   FWAIT_RETURN_ERASE: begin
-                    fwait_return_d = FWAIT_RETURN_MODIFY;
                     top_state_d = TOP_MODIFY;
-                  end
-                  // After WRITE: Flash ready -> either complete or continue with next sector
-                  FWAIT_RETURN_MODIFY: begin
-                    fwait_return_d = FWAIT_RETURN_IDLE;
-                    if (reg2hw.length.q == 0) begin
-                      top_state_d = TOP_IDLE;
-                      md_offset_d = 32'h0;  // Reset MODIFY offset for next operation
-                      sector_iter_offset_d = 32'h0; // Reset sector iteration offset for next operation
-                      hw2reg.control.start.de = 1'b1;     // Clear START bit so operation is only done once
-                      hw2reg.control.start.d = 1'b0;
-                      hw2reg.intr_status.de   = 1'b1;     // Set interrupt status (rise IRQ through assignements (see end of module))
-                      hw2reg.intr_status.d = reg2hw.intr_enable.q;
-                    end else begin
-                      top_state_d = TOP_READ;
-                    end
                   end
                   // If WRITE has multiple pages to modify, continue with next page
                   FWAIT_RETURN_WRITE: begin
                     top_state_d = TOP_WRITE;
+                  end
+                  // If WRITE completed all pages: either complete or continue with next sector
+                  FWAIT_RETURN_SECTOR_DONE: begin
+                    fwait_return_d = FWAIT_RETURN_IDLE;
+                    if (reg2hw.length.q == 0) begin
+                      // All sectors done
+                      top_state_d = TOP_DONE;
+                    end else begin
+                      // More sectors to write
+                      top_state_d = TOP_READ;
+                    end
                   end
                   default: begin
                   end
@@ -1585,7 +1574,7 @@ module w25q128jw_controller
               if (page_cnt_q == 4'hf) begin
                 // All 16 pages in current sector programmed
                 // Always wait until flash is not busy before finalizing or moving to next sector.
-                fwait_return_d = FWAIT_RETURN_MODIFY;
+                fwait_return_d = FWAIT_RETURN_SECTOR_DONE;
                 page_cnt_d = 4'b0;  // Reset page counter for next sector / next operation
                 if (reg2hw.length.q != 0) begin
                   sector_iter_offset_d = sector_iter_offset_q + {19'b0, SE_BSIZE}; // Next sector (+4KB)
@@ -1715,6 +1704,18 @@ module w25q128jw_controller
             dma_init_state_d = DMA_INIT_IDLE;
           end
         endcase
+      end
+
+      TOP_DONE: begin
+        md_offset_d = 32'h0;
+        sector_iter_offset_d = 32'h0;
+
+        hw2reg.control.start.de = 1'b1;
+        hw2reg.control.start.d  = 1'b0;
+        hw2reg.intr_status.de   = 1'b1;
+        hw2reg.intr_status.d    = reg2hw.intr_enable.q;
+
+        top_state_d = TOP_IDLE;
       end
 
       default: begin
