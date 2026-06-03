@@ -1,0 +1,226 @@
+// Copyright 2026 EPFL
+// Solderpad Hardware License, Version 2.1, see LICENSE.md for details.
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+//
+// SRAM bank instantiation heavily inspired by:
+//   "hw/vendor/pulp_platform/tech_cells_generic/src/fpga/tc_sram_xilinx.sv"
+//   "hw/ip_examples/slow_memory/rtl/slow_memory.sv"
+//
+// Author: Patrick Pataky     <patrick.pataky@epfl.ch>
+//                            <patdb10@gmail.com>
+
+module cache
+  import cache_reg_pkg::*;
+  import obi_pkg::*;
+#(
+  parameter int unsigned SramLatency = 32'd1
+) (
+  input  logic           clk_i,
+  input  logic           rst_ni,
+
+  // DMA (SLAVE) communication
+  input  obi_req_t       dma_req_i,
+  output obi_resp_t      dma_resp_o,
+
+  // Controller (MASTER) communication
+  input  cache_req_t     controller_req_i,
+  output cache_res_t     controller_resp_o
+);
+
+  // Currently implements single way cache (direct-mapped) only
+  // === N_WAYS = 1 ===
+
+  localparam int unsigned SramAddrWidth = $clog2(N_WORDS);
+
+  cache_op_e                          active_op_q, active_op_d;
+  logic [SECTOR_SIZE_WORDS_WIDTH-1:0] word_counter_q, word_counter_d;
+
+  // Sector address registered at start of READ/WRITE
+  logic [N_SETS_WIDTH-1:0]            target_set_q, target_set_d;
+  logic [TAG_WIDTH-1:0]               target_tag_q, target_tag_d;
+  logic [SECTOR_SIZE_WORDS_WIDTH:0]   target_word_len_q, target_word_len_d; // Number of words to transfer
+  logic                               target_dirty_q, target_dirty_d; // Only valid for WRITE, indicates whether the sector being written is dirty or clean
+
+  // Cache way(s) signals
+  logic                               hit;
+  logic                               dirty;
+  logic [SECTOR_ADDRESS_WIDTH-1:0]    victim_sector;
+  logic                               last_sector_word;
+  logic                               last_word_was_read_q, last_word_was_read_d; // To track whether the last word transferred was a read
+
+  // SRAM Port signals
+  logic                               mem_req;
+  logic                               mem_we;
+  logic [SramAddrWidth-1:0]           mem_addr;
+  data_t                              mem_wdata;
+  be_t                                mem_be;
+  data_t                              mem_rdata;
+
+  logic                               gnt;
+  logic [SramLatency-1:0]             rvalid;
+
+  // FSM state, word counter, and target sector address
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      active_op_q       <= CACHE_IDLE;
+      word_counter_q    <= '0;
+      target_set_q      <= '0;
+      target_tag_q      <= '0;
+      target_word_len_q <= '0;
+      target_dirty_q    <= '0;
+
+      last_word_was_read_q <= 1'b0;
+    end else begin
+      active_op_q       <= active_op_d;
+      word_counter_q    <= word_counter_d;
+      target_set_q      <= target_set_d;
+      target_tag_q      <= target_tag_d;
+      target_word_len_q <= target_word_len_d;
+      target_dirty_q    <= target_dirty_d;
+
+      last_word_was_read_q <= last_word_was_read_d;
+    end
+  end
+
+  always_comb begin
+    active_op_d       = active_op_q;
+    word_counter_d    = word_counter_q;
+    target_set_d      = target_set_q;
+    target_tag_d      = target_tag_q;
+    target_word_len_d = target_word_len_q;
+    target_dirty_d    = target_dirty_q;
+
+    last_word_was_read_d = last_word_was_read_q;
+
+    // Last word of the sector is being transferred in current cycle
+    last_sector_word  = (target_word_len_q == 'h1) & dma_req_i.req;
+    if (gnt) last_word_was_read_d = (active_op_q == CACHE_READ);
+
+    if (controller_req_i.req) begin
+      active_op_d       = controller_req_i.op;
+      target_set_d      = controller_req_i.addr.internal.set;
+      target_tag_d      = controller_req_i.addr.internal.tag;
+      target_word_len_d = controller_req_i.word_count;
+      target_dirty_d    = controller_req_i.dirty;
+
+      // Start at requested word offset within sector
+      word_counter_d    = controller_req_i.addr.internal.byte_offset[SECTOR_SIZE_BYTES_WIDTH-1:2];
+    end else begin
+      unique case (active_op_q)
+        CACHE_CHECK: begin
+          // Return to IDLE after checking for hit/miss
+          active_op_d = CACHE_IDLE;
+        end
+
+        CACHE_READ, CACHE_WRITE: begin
+          if (dma_req_i.req) begin
+            target_word_len_d = target_word_len_q - 1'b1;
+            word_counter_d    = word_counter_q    + 1'b1;
+
+            if (last_sector_word) begin
+              active_op_d = CACHE_IDLE;
+            end
+          end
+        end
+
+        CACHE_EVICT: begin
+          // Eviction completes immediately as we mark the sector as invalid in the cache way metadata
+          active_op_d = CACHE_IDLE;
+        end
+
+        default: ;
+      endcase
+    end
+  end
+
+  // SRAM Accesses
+  always_comb begin
+    mem_req   = 1'b0;
+    mem_we    = 1'b0;
+    mem_addr  = '0;
+    mem_wdata = '0;
+    mem_be    = '0;
+
+    if (dma_req_i.req) begin
+      unique case (active_op_q)
+        CACHE_WRITE: begin
+          mem_req   = 1'b1;
+          mem_we    = 1'b1;
+          mem_addr  = SramAddrWidth'({target_set_q, word_counter_q});
+          mem_wdata = dma_req_i.wdata;
+          mem_be    = dma_req_i.be;
+        end
+
+        CACHE_READ: begin
+          mem_req  = 1'b1;
+          mem_we   = 1'b0;
+          mem_addr = SramAddrWidth'({target_set_q, word_counter_q});
+          mem_be   = dma_req_i.be;
+        end
+
+        default: ;
+      endcase
+    end
+  end
+
+  // SRAM valid signal
+  // - grand only when the new operation is registered
+  assign gnt = dma_req_i.req & ((active_op_q == CACHE_READ) | (active_op_q == CACHE_WRITE));
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      rvalid <= '0;
+    end else begin
+      rvalid <= (rvalid << 1) | SramLatency'(gnt);
+    end
+  end
+
+  // Cache way metadata
+  cache_way way (
+    .clk_i(clk_i),
+    .rst_ni(rst_ni),
+
+    .active_op_i(active_op_q),
+    .current_set_i(target_set_q),
+    .current_tag_i(target_tag_q),
+    .request_dirty_i(target_dirty_q),
+    .last_sector_word_i(last_sector_word),
+
+    .hit_o(hit),
+    .dirty_o(dirty),
+    .victim_sector_o(victim_sector)
+  );
+
+  // Cache data (SRAM bank)
+  tc_sram #(
+    .NumWords (N_WORDS),        // Number of Words in data array
+    .DataWidth(WORD_SIZE_BITS), // Data signal width (in bits)
+    .ByteWidth(BYTE_SIZE_BITS), // Width of a data byte (in bits)
+    .NumPorts (N_WAYS),         // Number of read and write ports
+    .Latency  (SramLatency)     // Latency when the read data is available
+  ) cache_data (
+    .clk_i  (clk_i),
+    .rst_ni (rst_ni),
+    .req_i  (mem_req),
+    .we_i   (mem_we),
+    .addr_i (mem_addr),
+    .wdata_i(mem_wdata),
+    .be_i   (mem_be),
+    // output ports
+    .rdata_o(mem_rdata)
+  );
+
+  // Output assignments
+
+  // DMA response
+  assign dma_resp_o.gnt    = gnt;
+  assign dma_resp_o.rvalid = rvalid[SramLatency-1] & last_word_was_read_q; // rvalid is only relevant for READ operations, and we want to assert rvalid in the cycle when the last word of the sector is transferred
+  assign dma_resp_o.rdata  = mem_rdata;
+
+  // Controller response
+  assign controller_resp_o.hit = hit;
+
+  assign controller_resp_o.miss_info.dirty = dirty;
+  assign controller_resp_o.miss_info.victim_sector_address = victim_sector;
+
+endmodule
