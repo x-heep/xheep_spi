@@ -1041,13 +1041,12 @@ module w25q128jw_controller
             spi_host_reg_req_o.write = 1'b1;
             spi_host_reg_req_o.valid = 1'b1;
 
-            // TODO: add cache to QUAD too
-            if (reg2hw.control.rnw.q) begin
-              // READ: Use exact flash address from F_ADDRESS register
-              flash_address = reg2hw.f_address.q & 32'h00ffffff;
-            end else begin
-              // WRITE: Use sector-aligned address + current sector iteration offset
+            if (CACHE_EN || !reg2hw.control.rnw.q) begin
+              // Cache enabled or WRITE: use sector-aligned address + current sector iteration offset
               flash_address = (reg2hw.f_address.q & 32'h00fff000) + (sector_iter_offset_q);
+            end else begin
+              // READ without cache: use exact flash address from F_ADDRESS register
+              flash_address = reg2hw.f_address.q & 32'h00ffffff;
             end
 
             spi_host_reg_req_o.wdata = (bitfield_byteswap32(flash_address) >> 8) |
