@@ -18,20 +18,7 @@ filesets:
     - rtl/spi_subsystem.sv
     file_type: systemVerilogSource
 
-# RTL is directly vendored from OpenTitan, so we only generated headers and docs
-generate:
-  spi_host:
-    generator: regtool
-    parameters:
-      config:           vendor/lowrisc_opentitan_spi_host/data/spi_host.hjson
-      name:             spi_host
-      sw_path:          sw/spi_host/spi_host_regs.h
-      structs_sw_path:  sw/spi_host/spi_host_structs.h
-      doc_path:         docs/spi_host/spi_host_regs.md
-
 targets:
   default:
     filesets:
     - files_rtl
-    generate:
-    - spi_host
