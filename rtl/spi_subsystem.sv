@@ -5,10 +5,14 @@
 
 
 module spi_subsystem
-  import obi_pkg::*;
-  import reg_pkg::*;
   import core_v_mini_mcu_pkg::*;
-(
+#(
+    // OBI and Register Interface data types
+    parameter type obi_req_t = logic,
+    parameter type obi_rsp_t = logic,
+    parameter type reg_req_t = logic,
+    parameter type reg_rsp_t = logic
+) (
     input logic clk_i,
     input logic rst_ni,
 
@@ -149,8 +153,8 @@ module spi_subsystem
 
   // OpenTitan SPI Snitch Version used for booting
   spi_host #(
-      .reg_req_t(reg_pkg::reg_req_t),
-      .reg_rsp_t(reg_pkg::reg_rsp_t)
+      .reg_req_t(reg_req_t),
+      .reg_rsp_t(reg_rsp_t)
   ) ot_spi_i (
       .clk_i,
       .rst_ni,

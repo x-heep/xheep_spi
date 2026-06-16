@@ -21,8 +21,8 @@ module w25q128jw_controller
   import dma_reg_pkg::*;
   import spi_host_reg_pkg::*;
 #(
-    parameter type reg_req_t = reg_pkg::reg_req_t,
-    parameter type reg_rsp_t = reg_pkg::reg_rsp_t
+    parameter type reg_req_t = logic,
+    parameter type reg_rsp_t = logic
 ) (
     input logic clk_i,
     input logic rst_ni,
