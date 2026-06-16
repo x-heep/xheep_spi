@@ -17,10 +17,12 @@
  *                                   <alaingirardvd@gmail.com>
  */
 module w25q128jw_controller
-  import core_v_mini_mcu_pkg::*;
   import dma_reg_pkg::*;
   import spi_host_reg_pkg::*;
 #(
+    // DMA number of channels
+    parameter int unsigned DMA_CH_NUM = 'd1,
+    // Register Interface data types
     parameter type reg_req_t = logic,
     parameter type reg_rsp_t = logic
 ) (
@@ -44,8 +46,8 @@ module w25q128jw_controller
     input spi_host_reg_pkg::spi_host_hw2reg_status_reg_t external_spi_host_hw2reg_status_i,
 
     // DMA channel redy/done signals (directly from DMA IP)
-    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_ready_i,
-    input logic [core_v_mini_mcu_pkg::DMA_CH_NUM-1:0] dma_done_i
+    input logic [DMA_CH_NUM-1:0] dma_ready_i,
+    input logic [DMA_CH_NUM-1:0] dma_done_i
 );
 
   // ============== PACKAGE IMPORTS ==============
