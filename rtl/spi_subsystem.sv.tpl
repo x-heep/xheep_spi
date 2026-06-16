@@ -24,7 +24,7 @@ module spi_subsystem #(
 
     // Memory mapped SPI
     input  obi_req_t  spimemio_req_i,
-    output obi_resp_t spimemio_resp_o,
+    output obi_rsp_t  spimemio_resp_o,
 
     // Yosys SPI configuration
     input  reg_req_t  yo_reg_req_i,
