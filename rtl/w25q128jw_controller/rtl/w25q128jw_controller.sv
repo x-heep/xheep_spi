@@ -20,7 +20,9 @@ module w25q128jw_controller
   import dma_reg_pkg::*;
   import spi_host_reg_pkg::*;
 #(
-    // DMA number of channels
+    // SPI host memory address
+    parameter logic [31:0] SPI_FLASH_START_ADDRESS = 'h0,
+    // External DMA number of channels
     parameter int unsigned DMA_CH_NUM = 'd1,
     // Register Interface data types
     parameter type reg_req_t = logic,

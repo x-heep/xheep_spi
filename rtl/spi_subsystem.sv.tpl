@@ -7,7 +7,9 @@
 %>
 
 module spi_subsystem #(
-    // DMA number of channels
+    // SPI host memory address
+    parameter logic [31:0] SPI_FLASH_START_ADDRESS = 'h0,
+    // External DMA number of channels
     parameter int unsigned DMA_CH_NUM = 'd1,
     // OBI and Register Interface data types
     parameter type obi_req_t = logic,
@@ -175,6 +177,7 @@ module spi_subsystem #(
   );
 
   w25q128jw_controller #(
+      .SPI_FLASH_START_ADDRESS(SPI_FLASH_START_ADDRESS),
       .DMA_CH_NUM(DMA_CH_NUM),
       .reg_req_t(reg_req_t),
       .reg_rsp_t(reg_rsp_t)
