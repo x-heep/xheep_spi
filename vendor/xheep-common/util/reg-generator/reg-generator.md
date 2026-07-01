@@ -43,7 +43,7 @@ All paths are relative to `files_root`, which FuseSoC sets to the directory cont
 | Parameter          | Required | Description |
 |--------------------|----------|-------------|
 | `name`             | yes      | Name of the register block (used to derive output filenames). |
-| `config`           | yes      | Path to the HJSON register description, relative to `files_root`. A `.tpl` extension triggers Mako template rendering before passing the file to `regtool`. |
+| `config`           | yes      | Path to the HJSON register description for `regtool.py`, relative to `files_root`. If a `.hjson.tpl` Mako template is passed, the key-value parameters provided to the generator (see `<others>` below) are used to render the output first. If you are rendering parameters with X-HEEP's [MCU-GEN](https://github.com/x-heep/xheep_gen) or equivalent tool, provide the path to the _rendered_ `.hjson`. |
 | `rtl_dir`          | no       | Output directory for the generated RTL files, relative to `files_root`. When omitted, no RTL is generated. |
 | `sw_path`          | no       | Output file path for the generated C register-defines header, relative to `files_root`. When omitted, no C header is generated. |
 | `doc_path`         | no       | Output file path for the generated Markdown register documentation, relative to `files_root`. When omitted, no documentation is generated. |
@@ -115,6 +115,8 @@ targets:
 ## Template-based HJSON
 
 When `config` has a `.tpl` extension, the generator first renders it as a [Mako](https://www.makotemplates.org/) template before passing it to `regtool`. This is useful for parametric register maps whose field count or addresses depend on design-time constants. All `parameters` key-value pairs (e.g, `<others>`) entries are forwarded to the template as variables, plus a pre-computed `version_hex` (a `0x00MMmmPP` hex string derived from the target core's semantic version).
+
+> **Note:** In those cases where a dedicated template renderer is used before calling FuseSoC, as it happens with [MCU-GEN](https://github.com/x-heep/xheep_gen) in X-HEEP, the rendered `.hjson` file must be passed as the `config` parameter.
 
 ## Caching
 
