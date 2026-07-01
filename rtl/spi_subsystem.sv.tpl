@@ -122,7 +122,12 @@ module spi_subsystem #(
   assign yo_spi_csb_en = 2'b01;
   assign yo_spi_csb[1] = 1'b1;
 
-  obi_spimemio obi_spimemio_i (
+  obi_spimemio #(
+    .obi_req_t(obi_req_t),
+    .obi_rsp_t(obi_rsp_t),
+    .reg_req_t(reg_req_t),
+    .reg_rsp_t(reg_rsp_t)
+  ) obi_spimemio_i (
       .clk_i,
       .rst_ni,
       .flash_csb_o(yo_spi_csb[0]),
