@@ -121,12 +121,11 @@ package w25q128jw_controller_pkg;
   // -------- MODIFY FSM STATES --------
   // Copies new data into the sector buffer (RAM) at the correct offset
   // Uses DMA to transfer from ram_new_data to ram_buffer (or from cache if enabled)
-  typedef enum logic [2:0] {
+  typedef enum logic [1:0] {
     MODIFY_IDLE,  // Leads to DMA initialization
     MODIFY_REGS, // Set the DMA registers (ram_new_data + offset (which sector we are now looking to write into + F_ADDRESS sector misalignment))
     MODIFY_TRANS,  // Wait for DMA transfer complete and update offsets + remaining length to write
-    MODIFY_MEMIO_REQ,
-    MODIFY_MEMIO
+    MODIFY_MEMIO_REQ
   } modify_state_e;
 
   // -------- WRITE FSM STATES --------

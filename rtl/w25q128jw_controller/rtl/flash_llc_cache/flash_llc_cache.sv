@@ -32,6 +32,12 @@ module flash_llc_cache
     input  cache_req_t controller_req_i,
     output cache_res_t controller_resp_o,
 
+    // Address the hit/miss lookup (`controller_resp_o`) is answered for. It is answered
+    // combinationally, so the controller can decide hit vs miss in the very cycle it
+    // issues its request. It MUST be driven from registered state / module inputs only,
+    // never from `controller_resp_o`, otherwise a combinational loop is created.
+    input addr_t lookup_addr_i,
+
     input  logic  mem_man_req_i,
     input  be_t   memio_be_i,
     input  data_t memio_wdata_i,
@@ -57,50 +63,50 @@ module flash_llc_cache
       target_dirty_d; // Only valid for WRITE, indicates whether the sector being written is dirty or clean
 
   // Cache way(s) signals
-  logic                            hit;
-  logic                            dirty;
-  logic [SECTOR_ADDRESS_WIDTH-1:0] victim_sector;
-  logic                            last_sector_word;
+  logic                             hit;
+  logic                             dirty;
+  logic  [SECTOR_ADDRESS_WIDTH-1:0] victim_sector;
+  logic                             last_sector_word;
 
   // Cache Port signals
-  logic                      mem_req;
-  logic                      mem_we;
-  logic  [SramAddrWidth-1:0] mem_addr;
-  data_t                     mem_wdata;
-  be_t                       mem_be;
+  logic                             mem_req;
+  logic                             mem_we;
+  logic  [       SramAddrWidth-1:0] mem_addr;
+  data_t                            mem_wdata;
+  be_t                              mem_be;
 
-  logic                      gnt;
-  logic                      rvalid;
+  logic                             gnt;
+  logic                             rvalid;
 
   // FSM state, word counter, and target sector address
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      active_op_q          <= CACHE_IDLE;
-      word_counter_q       <= '0;
-      target_set_q         <= '0;
-      target_tag_q         <= '0;
-      target_word_len_q    <= '0;
-      target_dirty_q       <= '0;
+      active_op_q       <= CACHE_IDLE;
+      word_counter_q    <= '0;
+      target_set_q      <= '0;
+      target_tag_q      <= '0;
+      target_word_len_q <= '0;
+      target_dirty_q    <= '0;
     end else begin
-      active_op_q          <= active_op_d;
-      word_counter_q       <= word_counter_d;
-      target_set_q         <= target_set_d;
-      target_tag_q         <= target_tag_d;
-      target_word_len_q    <= target_word_len_d;
-      target_dirty_q       <= target_dirty_d;
+      active_op_q       <= active_op_d;
+      word_counter_q    <= word_counter_d;
+      target_set_q      <= target_set_d;
+      target_tag_q      <= target_tag_d;
+      target_word_len_q <= target_word_len_d;
+      target_dirty_q    <= target_dirty_d;
     end
   end
 
   always_comb begin
-    active_op_d          = active_op_q;
-    word_counter_d       = word_counter_q;
-    target_set_d         = target_set_q;
-    target_tag_d         = target_tag_q;
-    target_word_len_d    = target_word_len_q;
-    target_dirty_d       = target_dirty_q;
+    active_op_d       = active_op_q;
+    word_counter_d    = word_counter_q;
+    target_set_d      = target_set_q;
+    target_tag_d      = target_tag_q;
+    target_word_len_d = target_word_len_q;
+    target_dirty_d    = target_dirty_q;
 
     // Last word of the sector is being transferred in current cycle
-    last_sector_word     = (target_word_len_q == 'h1) & dma_req_i.req;
+    last_sector_word  = (target_word_len_q == 'h1) & dma_req_i.req;
 
     if (controller_req_i.req) begin
       active_op_d       = controller_req_i.op;
@@ -209,6 +215,8 @@ module flash_llc_cache
       .rst_ni(rst_ni),
 
       .active_op_i(active_op_q),
+      .lookup_set_i(lookup_addr_i.internal.set),
+      .lookup_tag_i(lookup_addr_i.internal.tag),
       .current_set_i(target_set_q),
       .current_tag_i(target_tag_q),
       .request_dirty_i(target_dirty_q),
@@ -228,7 +236,7 @@ module flash_llc_cache
 
   // Cache data (SRAM bank)
   sram_wrapper #(
-      .NumWords (N_WORDS),       // Number of Words in data array
+      .NumWords (N_WORDS),        // Number of Words in data array
       .DataWidth(WORD_SIZE_BITS)  // Data signal width (in bits)
   ) cache_data (
       .clk_i  (clk_cg),

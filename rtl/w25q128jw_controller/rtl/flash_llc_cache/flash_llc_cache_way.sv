@@ -17,10 +17,19 @@ module flash_llc_cache_way
     input logic clk_i,
     input logic rst_ni,
 
-    cache_op_e active_op_i,
-    logic [N_SETS_WIDTH-1:0] current_set_i,
-    input [TAG_WIDTH-1:0] current_tag_i,
-    input  logic                            request_dirty_i, // Only valid for WRITE, indicates whether the sector being written is dirty or clean
+    input cache_op_e active_op_i,
+
+    // Lookup index: address currently *presented* by the controller. The metadata is
+    // combinational on it so hit/dirty/victim are answered in the same cycle the request
+    // is issued, before the address is registered.
+    input logic [N_SETS_WIDTH-1:0] lookup_set_i,
+    input logic [TAG_WIDTH-1:0] lookup_tag_i,
+
+    // Update index: address of the operation currently in flight (registered), used to
+    // update the metadata when the operation completes.
+    input logic [N_SETS_WIDTH-1:0] current_set_i,
+    input logic [TAG_WIDTH-1:0] current_tag_i,
+    input logic request_dirty_i, // Only valid for WRITE, indicates whether the sector being written is dirty or clean
     input logic last_sector_word_i,
 
     output logic                            hit_o,
@@ -28,57 +37,47 @@ module flash_llc_cache_way
     output logic [SECTOR_ADDRESS_WIDTH-1:0] victim_sector_o  // Only defined in case of miss
 );
 
-  logic [N_SETS-1:0] valid_q, valid_d;
-  logic [N_SETS-1:0] dirty_q, dirty_d;
-  logic [TAG_WIDTH-1:0] tags_q[N_SETS-1:0], tags_d[N_SETS-1:0];
+  logic [N_SETS-1:0] valid;
+  logic [N_SETS-1:0] dirty;
+  logic [TAG_WIDTH-1:0] tags[N_SETS-1:0];
 
-  logic hit;
+  logic lookup_hit;
+  logic update_hit;
 
-  assign hit = valid_q[current_set_i] & (tags_q[current_set_i] == current_tag_i);
+  assign lookup_hit = valid[lookup_set_i] & (tags[lookup_set_i] == lookup_tag_i);
+  assign update_hit = valid[current_set_i] & (tags[current_set_i] == current_tag_i);
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      valid_q <= 'h0;
-      dirty_q <= 'h0;
+      valid <= 'h0;
+      dirty <= 'h0;
 
-      for (int i = 0; i < N_SETS; i++) tags_q[i] <= 'h0;
+      for (int i = 0; i < N_SETS; i++) tags[i] <= 'h0;
     end else begin
-      valid_q <= valid_d;
-      dirty_q <= dirty_d;
+      unique case (active_op_i)
+        CACHE_WRITE: begin
+          // Sector is now fully in cache (valid), and may be dirty if it's a write
+          if (last_sector_word_i) begin
+            valid[current_set_i] <= 1'b1;
+            dirty[current_set_i] <= request_dirty_i;
+            tags[current_set_i]  <= current_tag_i;
+          end
+        end
 
-      for (int i = 0; i < N_SETS; i++) tags_q[i] <= tags_d[i];
+        CACHE_EVICT: begin
+          // Sector is evicted (not valid)
+          if (update_hit) begin
+            valid[current_set_i] <= 1'b0;
+          end
+        end
+
+        default: ;
+      endcase
     end
   end
 
-  always_comb begin
-    valid_d = valid_q;
-    dirty_d = dirty_q;
-
-    for (int i = 0; i < N_SETS; i++) tags_d[i] = tags_q[i];
-
-    unique case (active_op_i)
-      CACHE_WRITE: begin
-        // Sector is now fully in cache (valid), and may be dirty if it's a write
-        if (last_sector_word_i) begin
-          valid_d[current_set_i] = 1'b1;
-          dirty_d[current_set_i] = request_dirty_i;
-          tags_d[current_set_i]  = current_tag_i;
-        end
-      end
-
-      CACHE_EVICT: begin
-        // Sector is evicted (not valid)
-        if (hit) begin
-          valid_d[current_set_i] = 1'b0;
-        end
-      end
-
-      default: ;
-    endcase
-  end
-
-  assign hit_o = hit;
-  assign dirty_o = dirty_q[current_set_i];
-  assign victim_sector_o = {tags_q[current_set_i], current_set_i};
+  assign hit_o = lookup_hit;
+  assign dirty_o = dirty[lookup_set_i];
+  assign victim_sector_o = {tags[lookup_set_i], lookup_set_i};
 
 endmodule
